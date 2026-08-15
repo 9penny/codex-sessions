@@ -9,6 +9,7 @@ package sessionindex
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -99,6 +100,25 @@ type Fingerprint struct {
 	// whether the native file changed, so a user's delete stays deleted until sessions.db
 	// is wiped and rebuilt. See the deleted-column migration in ensureSchema.
 	Deleted bool
+}
+
+// AIMetadata is derived, replaceable metadata generated from a redacted session
+// conversation. The source fingerprint and prompt version make enrichment
+// incremental without ever modifying the provider's native session file.
+type AIMetadata struct {
+	Agent              string
+	SessionID          string
+	SourceSize         int64
+	SourceMtime        int64
+	SourceIndexVersion int
+	PromptVersion      int
+	Model              string
+	Title              string
+	Summary            string
+	Tags               []string
+	InputTokens        int
+	OutputTokens       int
+	EnrichedAt         string
 }
 
 // Store is a handle to sessions.db.
@@ -249,6 +269,26 @@ func (s *Store) ensureSchema() error {
 		name,
 		body,
 		search_terms
+	);
+
+	-- AI metadata is a derived sidecar over sessions. It deliberately contains no
+	-- conversation text and has no foreign key, so sessions.db remains a disposable
+	-- cache that can be rebuilt in either order.
+	CREATE TABLE IF NOT EXISTS ai_metadata (
+		agent                TEXT NOT NULL,
+		session_id           TEXT NOT NULL,
+		source_size          INTEGER NOT NULL,
+		source_mtime         INTEGER NOT NULL,
+		source_index_version INTEGER NOT NULL,
+		prompt_version       INTEGER NOT NULL,
+		model                TEXT NOT NULL,
+		title                TEXT NOT NULL,
+		summary              TEXT NOT NULL,
+		tags_json            TEXT NOT NULL,
+		input_tokens         INTEGER NOT NULL,
+		output_tokens        INTEGER NOT NULL,
+		enriched_at          TEXT NOT NULL,
+		PRIMARY KEY (agent, session_id)
 	);
 	`
 	if _, err := s.db.Exec(schema); err != nil {
@@ -409,6 +449,90 @@ func (s *Store) Fingerprints() (map[string]Fingerprint, error) {
 // FingerprintKey is the map key for a session's fingerprint: agent + NUL + session_id.
 func FingerprintKey(agent, sessionID string) string {
 	return agent + "\x00" + sessionID
+}
+
+// ListEnrichmentCandidates returns newest-first Codex sessions whose derived AI
+// metadata is absent or stale. force includes every live interactive Codex session.
+func (s *Store) ListEnrichmentCandidates(limit, promptVersion int, force bool) ([]Session, error) {
+	if limit < 1 || limit > 1000 {
+		return nil, fmt.Errorf("enrichment limit must be between 1 and 1000")
+	}
+	if promptVersion < 1 {
+		return nil, fmt.Errorf("prompt version must be positive")
+	}
+
+	q := `SELECT ` + sessionColumns + ` FROM sessions
+		WHERE deleted = 0 AND agent = 'codex' AND native_path != ''
+		AND (kind = '' OR kind = 'interactive')`
+	args := []any{}
+	if !force {
+		q += ` AND NOT EXISTS (
+			SELECT 1 FROM ai_metadata a
+			WHERE a.agent = sessions.agent AND a.session_id = sessions.session_id
+			AND a.source_size = sessions.size AND a.source_mtime = sessions.mtime
+			AND a.source_index_version = sessions.index_version AND a.prompt_version = ?
+		)`
+		args = append(args, promptVersion)
+	}
+	q += ` ORDER BY updated_at DESC, created_at DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return scanSessions(rows)
+}
+
+// UpsertAIMetadata atomically replaces one session's derived metadata.
+func (s *Store) UpsertAIMetadata(metadata AIMetadata) error {
+	tagsJSON, err := json.Marshal(metadata.Tags)
+	if err != nil {
+		return fmt.Errorf("encode AI metadata tags: %w", err)
+	}
+	_, err = s.db.Exec(`INSERT INTO ai_metadata (
+		agent, session_id, source_size, source_mtime, source_index_version,
+		prompt_version, model, title, summary, tags_json, input_tokens,
+		output_tokens, enriched_at
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+	ON CONFLICT(agent, session_id) DO UPDATE SET
+		source_size=excluded.source_size, source_mtime=excluded.source_mtime,
+		source_index_version=excluded.source_index_version, prompt_version=excluded.prompt_version,
+		model=excluded.model, title=excluded.title, summary=excluded.summary,
+		tags_json=excluded.tags_json, input_tokens=excluded.input_tokens,
+		output_tokens=excluded.output_tokens, enriched_at=excluded.enriched_at`,
+		metadata.Agent, metadata.SessionID, metadata.SourceSize, metadata.SourceMtime,
+		metadata.SourceIndexVersion, metadata.PromptVersion, metadata.Model, metadata.Title,
+		metadata.Summary, string(tagsJSON), metadata.InputTokens, metadata.OutputTokens,
+		metadata.EnrichedAt)
+	if err != nil {
+		return fmt.Errorf("upsert AI metadata: %w", err)
+	}
+	return nil
+}
+
+// GetAIMetadata returns a session's derived metadata, if present.
+func (s *Store) GetAIMetadata(agent, sessionID string) (AIMetadata, bool, error) {
+	var metadata AIMetadata
+	var tagsJSON string
+	err := s.db.QueryRow(`SELECT agent, session_id, source_size, source_mtime,
+		source_index_version, prompt_version, model, title, summary, tags_json,
+		input_tokens, output_tokens, enriched_at
+		FROM ai_metadata WHERE agent = ? AND session_id = ?`, agent, sessionID).Scan(
+		&metadata.Agent, &metadata.SessionID, &metadata.SourceSize, &metadata.SourceMtime,
+		&metadata.SourceIndexVersion, &metadata.PromptVersion, &metadata.Model,
+		&metadata.Title, &metadata.Summary, &tagsJSON, &metadata.InputTokens,
+		&metadata.OutputTokens, &metadata.EnrichedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AIMetadata{}, false, nil
+	}
+	if err != nil {
+		return AIMetadata{}, false, err
+	}
+	if err := json.Unmarshal([]byte(tagsJSON), &metadata.Tags); err != nil {
+		return AIMetadata{}, false, fmt.Errorf("decode AI metadata tags: %w", err)
+	}
+	return metadata, true, nil
 }
 
 // sessionUpsertStmts are the per-row statements UpsertBatch prepares once and reuses across

@@ -85,6 +85,7 @@ func TestLocalCommandsMakeNoNetworkConnections(t *testing.T) {
 		{args: []string{"help", "reindex"}, wantIdentity: true},
 		{args: []string{"help", "enrich"}, wantIdentity: true},
 		{args: []string{"help", "enrich", "models"}, wantIdentity: true},
+		{args: []string{"enrich", "--dry-run"}},
 		{args: []string{"version"}, wantIdentity: true},
 		{args: []string{"--log", "version"}, wantIdentity: true},
 		{args: []string{"--version"}, wantIdentity: true},

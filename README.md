@@ -56,6 +56,9 @@ csessions reindex
 
 # Reparse every native Codex session
 csessions reindex --force
+
+# Inspect enrichment size locally: no API request and no metadata write
+csessions enrich --dry-run --limit 10
 ```
 
 Core TUI keys:
@@ -80,6 +83,11 @@ Codex Sessions respects the XDG base-directory variables:
 | Disposable cache | `~/.cache/csessions/` |
 
 Deleting the derived database is safe; `csessions reindex` rebuilds it from native JSONL.
+
+Optional AI enrichment is never automatic. It requires the explicit `csessions enrich --yes`
+command, sends only fail-closed redacted user/assistant text, and stores generated titles,
+summaries, and tags only in the disposable database. Read the
+[enrichment privacy and usage guide](specstory-cli/docs/V0.2-ENRICHMENT.md) before enabling it.
 
 ## Development
 
