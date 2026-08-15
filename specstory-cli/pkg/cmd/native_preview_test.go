@@ -119,6 +119,22 @@ func TestNativePreviewRevealIsExplicitAndClearedOnClose(t *testing.T) {
 	}
 }
 
+func TestGeneratedMetadataDecoratesOnlyMaskedPreview(t *testing.T) {
+	session := sessionindex.Session{
+		AITitle: "Generated title", AISummary: "Generated summary", AITags: []string{"go", "privacy"},
+	}
+	masked := decorateMaskedPreview("# Native conversation", session)
+	if !strings.Contains(masked, "AI-generated metadata") || !strings.Contains(masked, "Generated summary") || !strings.Contains(masked, "# Native conversation") {
+		t.Fatalf("masked preview decoration=%q", masked)
+	}
+	if got := sessionTitle(session); !strings.Contains(got, "✦") || !strings.Contains(got, "Generated title") {
+		t.Fatalf("sessionTitle()=%q; want visibly generated title", got)
+	}
+	if got := sessionTitle(sessionindex.Session{Name: "Native title"}); got != "Native title" {
+		t.Fatalf("native fallback title=%q", got)
+	}
+}
+
 func TestNativePreviewNeverFallsBackToIndexedBody(t *testing.T) {
 	store, err := sessionindex.Open(filepath.Join(t.TempDir(), "sessions.db"))
 	if err != nil {

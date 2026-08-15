@@ -11,6 +11,9 @@ or empty derived index is rebuilt from native Codex JSONL first.
 - Launch always uses the recorded directory. Missing, empty, or non-directory paths block launch
   with an explanation; there is no silent cwd fallback.
 - `space` parses native JSONL on demand and opens a masked preview.
+- A current optional AI title is preferred in lists and visibly prefixed with `✦`. Masked preview
+  shows the generated summary and tags in a separate “may be wrong” block above the native
+  transcript. Raw reveal contains only the native transcript.
 - Uppercase `R` reveals only the active preview in memory. Closing preview, navigating, or exiting
   clears the revealed content.
 - `/` searches sessions in the current scope. `tab` switches between the current project and all
@@ -27,6 +30,10 @@ The local-mode footer is intentionally compact enough for an 80-column SSH termi
 The session list and search use the disposable SQLite index. Preview does not use the indexed FTS
 body: it reads the selected native JSONL file, applies redaction, and sends only the resulting text
 to the TUI model. Raw reveal is neither persisted nor logged.
+
+AI metadata never replaces the native transcript or native session name. It is hydrated only when
+its source size, mtime, index version, and prompt version are current; otherwise the TUI silently
+uses the native fallback.
 
 The index and native files remain separate:
 

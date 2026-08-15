@@ -243,6 +243,15 @@ type sessionTUIOpts struct {
 
 func newSessionTUI(store *sessionindex.Store, registry *factory.Registry, projectID, projectName string,
 	sessions []sessionindex.Session, agents map[string]agentMeta, installed []agentChoice, opts sessionTUIOpts) sessionTUI {
+	if store != nil {
+		_ = store.AttachCurrentAIMetadata(sessions)
+		if opts.pinnedSession != nil {
+			pinned := []sessionindex.Session{*opts.pinnedSession}
+			if store.AttachCurrentAIMetadata(pinned) == nil {
+				*opts.pinnedSession = pinned[0]
+			}
+		}
+	}
 
 	ti := textinput.New()
 	ti.Prompt = "/ "

@@ -115,6 +115,9 @@ func (m sessionTUI) renderHeader() string {
 	if m.showHidden {
 		left += styDim.Render("  ·  ") + styWarn.Render("HIDDEN SHOWN")
 	}
+	if sessionsHaveAI(m.filtered) {
+		left += styDim.Render("  ·  ✦ AI-generated")
+	}
 	// Surface the active machine filter alongside the agent one, matching its "agent: X" form.
 	if ml := m.machineScopeLabel(); ml != "" {
 		left += styDim.Render("  ·  ") + styDim.Render("machine: ") + stySel.Render(ml)
@@ -131,6 +134,15 @@ func (m sessionTUI) renderHeader() string {
 		right = styDim.Render("☁ searching cloud…")
 	}
 	return headerRow(left, right, m.lineWidth())
+}
+
+func sessionsHaveAI(sessions []sessionindex.Session) bool {
+	for _, session := range sessions {
+		if strings.TrimSpace(session.AITitle) != "" || strings.TrimSpace(session.AISummary) != "" || len(session.AITags) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (m sessionTUI) renderRows() string {
@@ -457,9 +469,12 @@ func agentColWidth(agents map[string]agentMeta) int {
 	return w
 }
 
-// sessionTitle is the human label for a session: name, then slug, then short id.
+// sessionTitle prefers current AI metadata but marks it visibly as generated.
+// Native naming remains the complete fallback when enrichment is absent or stale.
 func sessionTitle(s sessionindex.Session) string {
 	switch {
+	case strings.TrimSpace(s.AITitle) != "":
+		return "✦ " + s.AITitle
 	case strings.TrimSpace(s.Name) != "":
 		return s.Name
 	case strings.TrimSpace(s.Slug) != "":
