@@ -67,7 +67,7 @@ func CreateEnrichCommand() *cobra.Command {
 			}
 			defer func() { _ = store.Close() }()
 			stats, err := enrichSessions(cmd.Context(), store, factory.GetRegistry(), generator, enrichmentOptions{
-				DryRun: dryRun, Force: force, Limit: limit, PromptVersion: enrichmentPromptVersion,
+				DryRun: dryRun, Force: force, Limit: limit, PromptVersion: sessionindex.CurrentAIPromptVersion,
 				Model: selectedModel, MaxInputTokens: maxInputTokens,
 				MaxTotalInputTokens: maxTotalInputTokens, MaxOutputTokens: maxOutputTokens,
 			})

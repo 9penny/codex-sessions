@@ -904,6 +904,9 @@ func (m sessionTUI) renderGlobalResults() string {
 	if m.showHidden {
 		left += styDim.Render("  ·  ") + styWarn.Render("HIDDEN SHOWN")
 	}
+	if sessionsHaveAI(m.globalResults) {
+		left += styDim.Render("  ·  ✦ AI-generated")
+	}
 	if ml := m.machineScopeLabel(); ml != "" {
 		left += styDim.Render("  ·  ") + styDim.Render("machine: ") + stySel.Render(ml)
 	}

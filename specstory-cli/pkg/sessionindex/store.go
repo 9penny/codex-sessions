@@ -31,6 +31,10 @@ import (
 const (
 	writerConns = 1
 	readerConns = 4
+
+	// CurrentAIPromptVersion identifies the metadata contract understood by the
+	// list/search UI. Older prompt output stays disposable but is hidden as stale.
+	CurrentAIPromptVersion = 1
 )
 
 // connectionPragmas are applied to EVERY pooled connection via the DSN rather than run once
@@ -87,6 +91,12 @@ type Session struct {
 	IsCloud     bool   // true = this row came from SpecStory Cloud, not the local index
 	DeviceID    string // cloud metadata.deviceId — stable machine id for the machine filter
 	MachineName string // cloud metadata.machineName — human machine label for the machine filter
+
+	// Current derived AI metadata. These values are hydrated from ai_metadata only
+	// when its source fingerprint and prompt version match this session.
+	AITitle   string
+	AISummary string
+	AITags    []string
 }
 
 // Fingerprint identifies an indexed session's freshness: the native file's size and
@@ -268,7 +278,9 @@ func (s *Store) ensureSchema() error {
 		agent UNINDEXED,
 		name,
 		body,
-		search_terms
+		search_terms,
+		ai_metadata,
+		ai_search_terms
 	);
 
 	-- AI metadata is a derived sidecar over sessions. It deliberately contains no
@@ -318,18 +330,18 @@ func (s *Store) ensureSchema() error {
 	// idx_sessions_project_recent (project_id is its left prefix). Idempotent; a no-op
 	// on fresh databases that never had it.
 	s.runMigration(`DROP INDEX IF EXISTS idx_sessions_project`)
-	return s.ensureCJKSearchColumn()
+	return s.ensureFTSSearchColumns()
 }
 
-// ensureCJKSearchColumn upgrades the standalone FTS table created by older versions. FTS5
-// virtual tables cannot add a column, so rows are copied into a replacement table while
+// ensureFTSSearchColumns upgrades standalone FTS tables created by older versions. FTS5
+// virtual tables cannot add columns, so rows are copied into a replacement table while
 // preserving rowids (and therefore every sessions.fts_rowid link).
-func (s *Store) ensureCJKSearchColumn() error {
+func (s *Store) ensureFTSSearchColumns() error {
 	rows, err := s.db.Query(`PRAGMA table_info(sessions_fts)`)
 	if err != nil {
 		return err
 	}
-	found := false
+	found := map[string]bool{}
 	for rows.Next() {
 		var cid int
 		var name, columnType string
@@ -339,12 +351,12 @@ func (s *Store) ensureCJKSearchColumn() error {
 			_ = rows.Close()
 			return err
 		}
-		found = found || name == "search_terms"
+		found[name] = true
 	}
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	if found {
+	if found["search_terms"] && found["ai_metadata"] && found["ai_search_terms"] {
 		return nil
 	}
 
@@ -358,19 +370,26 @@ func (s *Store) ensureCJKSearchColumn() error {
 			_ = tx.Rollback()
 		}
 	}()
-	if _, err := tx.Exec(`DROP TABLE IF EXISTS sessions_fts_cjk_upgrade`); err != nil {
+	if _, err := tx.Exec(`DROP TABLE IF EXISTS sessions_fts_search_upgrade`); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`CREATE VIRTUAL TABLE sessions_fts_cjk_upgrade USING fts5(
-		session_id UNINDEXED, agent UNINDEXED, name, body, search_terms)`); err != nil {
+	if _, err := tx.Exec(`CREATE VIRTUAL TABLE sessions_fts_search_upgrade USING fts5(
+		session_id UNINDEXED, agent UNINDEXED, name, body, search_terms, ai_metadata, ai_search_terms)`); err != nil {
 		return err
 	}
-	oldRows, err := tx.Query(`SELECT rowid, session_id, agent, name, body FROM sessions_fts`)
+	oldRows, err := tx.Query(`SELECT f.rowid, f.session_id, f.agent, f.name, f.body,
+		COALESCE(a.title, ''), COALESCE(a.summary, ''), COALESCE(a.tags_json, '')
+		FROM sessions_fts f
+		LEFT JOIN sessions s ON s.agent = f.agent AND s.session_id = f.session_id
+		LEFT JOIN ai_metadata a ON a.agent = s.agent AND a.session_id = s.session_id
+			AND a.source_size = s.size AND a.source_mtime = s.mtime
+			AND a.source_index_version = s.index_version AND a.prompt_version = ?`, CurrentAIPromptVersion)
 	if err != nil {
 		return err
 	}
-	insert, err := tx.Prepare(`INSERT INTO sessions_fts_cjk_upgrade
-		(rowid, session_id, agent, name, body, search_terms) VALUES (?,?,?,?,?,?)`)
+	insert, err := tx.Prepare(`INSERT INTO sessions_fts_search_upgrade
+		(rowid, session_id, agent, name, body, search_terms, ai_metadata, ai_search_terms)
+		VALUES (?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		_ = oldRows.Close()
 		return err
@@ -378,12 +397,14 @@ func (s *Store) ensureCJKSearchColumn() error {
 	defer func() { _ = insert.Close() }()
 	for oldRows.Next() {
 		var rowid int64
-		var sessionID, agent, name, body string
-		if err := oldRows.Scan(&rowid, &sessionID, &agent, &name, &body); err != nil {
+		var sessionID, agent, name, body, aiTitle, aiSummary, tagsJSON string
+		if err := oldRows.Scan(&rowid, &sessionID, &agent, &name, &body, &aiTitle, &aiSummary, &tagsJSON); err != nil {
 			_ = oldRows.Close()
 			return err
 		}
-		if _, err := insert.Exec(rowid, sessionID, agent, name, body, cjkSearchTerms(name+"\n"+body)); err != nil {
+		aiText := aiMetadataSearchText(aiTitle, aiSummary, tagsJSON)
+		if _, err := insert.Exec(rowid, sessionID, agent, name, body,
+			cjkSearchTerms(name+"\n"+body), aiText, cjkSearchTerms(aiText)); err != nil {
 			_ = oldRows.Close()
 			return err
 		}
@@ -401,7 +422,7 @@ func (s *Store) ensureCJKSearchColumn() error {
 	if _, err := tx.Exec(`DROP TABLE sessions_fts`); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`ALTER TABLE sessions_fts_cjk_upgrade RENAME TO sessions_fts`); err != nil {
+	if _, err := tx.Exec(`ALTER TABLE sessions_fts_search_upgrade RENAME TO sessions_fts`); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -409,6 +430,15 @@ func (s *Store) ensureCJKSearchColumn() error {
 	}
 	committed = true
 	return nil
+}
+
+func aiMetadataSearchText(title, summary, tagsJSON string) string {
+	var tags []string
+	if tagsJSON != "" {
+		_ = json.Unmarshal([]byte(tagsJSON), &tags)
+	}
+	parts := []string{strings.TrimSpace(title), strings.TrimSpace(summary), strings.Join(tags, " ")}
+	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
 // runMigration applies an idempotent schema migration whose error is usually the benign
@@ -490,7 +520,17 @@ func (s *Store) UpsertAIMetadata(metadata AIMetadata) error {
 	if err != nil {
 		return fmt.Errorf("encode AI metadata tags: %w", err)
 	}
-	_, err = s.db.Exec(`INSERT INTO ai_metadata (
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin AI metadata upsert: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	_, err = tx.Exec(`INSERT INTO ai_metadata (
 		agent, session_id, source_size, source_mtime, source_index_version,
 		prompt_version, model, title, summary, tags_json, input_tokens,
 		output_tokens, enriched_at
@@ -508,6 +548,31 @@ func (s *Store) UpsertAIMetadata(metadata AIMetadata) error {
 	if err != nil {
 		return fmt.Errorf("upsert AI metadata: %w", err)
 	}
+
+	var size, mtime int64
+	var indexVersion int
+	var ftsRowid sql.NullInt64
+	err = tx.QueryRow(`SELECT size, mtime, index_version, fts_rowid FROM sessions
+		WHERE agent = ? AND session_id = ?`, metadata.Agent, metadata.SessionID).Scan(
+		&size, &mtime, &indexVersion, &ftsRowid)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("look up AI metadata session: %w", err)
+	}
+	aiText := ""
+	if err == nil && size == metadata.SourceSize && mtime == metadata.SourceMtime &&
+		indexVersion == metadata.SourceIndexVersion && metadata.PromptVersion == CurrentAIPromptVersion {
+		aiText = aiMetadataSearchText(metadata.Title, metadata.Summary, string(tagsJSON))
+	}
+	if ftsRowid.Valid {
+		if _, err := tx.Exec(`UPDATE sessions_fts SET ai_metadata = ?, ai_search_terms = ? WHERE rowid = ?`,
+			aiText, cjkSearchTerms(aiText), ftsRowid.Int64); err != nil {
+			return fmt.Errorf("update AI metadata search index: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit AI metadata upsert: %w", err)
+	}
+	committed = true
 	return nil
 }
 
@@ -535,11 +600,71 @@ func (s *Store) GetAIMetadata(agent, sessionID string) (AIMetadata, bool, error)
 	return metadata, true, nil
 }
 
+// AttachCurrentAIMetadata hydrates sessions in place, but only when the stored
+// metadata matches their exact source fingerprint and the active prompt contract.
+func (s *Store) AttachCurrentAIMetadata(sessions []Session) error {
+	for i := range sessions {
+		sessions[i].AITitle = ""
+		sessions[i].AISummary = ""
+		sessions[i].AITags = nil
+	}
+	const chunkSize = 300 // two bind variables each; stays below SQLite's common 999 limit
+	for start := 0; start < len(sessions); start += chunkSize {
+		end := min(start+chunkSize, len(sessions))
+		clauses := make([]string, 0, end-start)
+		args := make([]any, 0, (end-start)*2)
+		positions := make(map[string][]int, end-start)
+		for i := start; i < end; i++ {
+			clauses = append(clauses, `(agent = ? AND session_id = ?)`)
+			args = append(args, sessions[i].Agent, sessions[i].SessionID)
+			key := FingerprintKey(sessions[i].Agent, sessions[i].SessionID)
+			positions[key] = append(positions[key], i)
+		}
+		rows, err := s.db.Query(`SELECT agent, session_id, source_size, source_mtime,
+			source_index_version, prompt_version, title, summary, tags_json
+			FROM ai_metadata WHERE `+strings.Join(clauses, ` OR `), args...)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var agent, sessionID, title, summary, tagsJSON string
+			var sourceSize, sourceMtime int64
+			var sourceVersion, promptVersion int
+			if err := rows.Scan(&agent, &sessionID, &sourceSize, &sourceMtime, &sourceVersion,
+				&promptVersion, &title, &summary, &tagsJSON); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			for _, i := range positions[FingerprintKey(agent, sessionID)] {
+				if sessions[i].Size != sourceSize || sessions[i].Mtime != sourceMtime ||
+					sessions[i].IndexVersion != sourceVersion || promptVersion != CurrentAIPromptVersion {
+					continue
+				}
+				var tags []string
+				if err := json.Unmarshal([]byte(tagsJSON), &tags); err != nil {
+					_ = rows.Close()
+					return fmt.Errorf("decode AI metadata tags: %w", err)
+				}
+				sessions[i].AITitle, sessions[i].AISummary, sessions[i].AITags = title, summary, tags
+			}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // sessionUpsertStmts are the per-row statements UpsertBatch prepares once and reuses across
 // every row in a transaction, so the SQL is parsed once per batch instead of once per row.
 type sessionUpsertStmts struct {
 	insSession    *sql.Stmt
 	selOldRowid   *sql.Stmt
+	selAIMetadata *sql.Stmt
 	delFTSByRowid *sql.Stmt
 	delFTSByKey   *sql.Stmt
 	insFTS        *sql.Stmt
@@ -570,8 +695,12 @@ func upsertOne(st sessionUpsertStmts, sess Session) error {
 			}
 		}
 	}
+	aiText, err := currentAIMetadataSearchText(st.selAIMetadata, sess)
+	if err != nil {
+		return err
+	}
 	res, err := st.insFTS.Exec(sess.SessionID, sess.Agent, sess.Name, sess.Body,
-		cjkSearchTerms(sess.Name+"\n"+sess.Body))
+		cjkSearchTerms(sess.Name+"\n"+sess.Body), aiText, cjkSearchTerms(aiText))
 	if err != nil {
 		return fmt.Errorf("insert fts row: %w", err)
 	}
@@ -586,6 +715,19 @@ func upsertOne(st sessionUpsertStmts, sess Session) error {
 		return fmt.Errorf("upsert session row: %w", err)
 	}
 	return nil
+}
+
+func currentAIMetadataSearchText(stmt *sql.Stmt, sess Session) (string, error) {
+	var title, summary, tagsJSON string
+	err := stmt.QueryRow(sess.Agent, sess.SessionID, sess.Size, sess.Mtime,
+		sess.IndexVersion, CurrentAIPromptVersion).Scan(&title, &summary, &tagsJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("look up current AI metadata: %w", err)
+	}
+	return aiMetadataSearchText(title, summary, tagsJSON), nil
 }
 
 // existingRow is the prior index state for a session: its FTS rowid link (if any) and whether
@@ -658,6 +800,12 @@ func prepareUpsert(tx *sql.Tx) (sessionUpsertStmts, func(), error) {
 	if err != nil {
 		return sessionUpsertStmts{}, func() {}, err
 	}
+	selAIMetadata, err := prep("current AI metadata lookup", `SELECT title, summary, tags_json
+		FROM ai_metadata WHERE agent = ? AND session_id = ? AND source_size = ?
+		AND source_mtime = ? AND source_index_version = ? AND prompt_version = ?`)
+	if err != nil {
+		return sessionUpsertStmts{}, func() {}, err
+	}
 	delFTSByRowid, err := prep("fts delete by rowid", `DELETE FROM sessions_fts WHERE rowid = ?`)
 	if err != nil {
 		return sessionUpsertStmts{}, func() {}, err
@@ -666,13 +814,16 @@ func prepareUpsert(tx *sql.Tx) (sessionUpsertStmts, func(), error) {
 	if err != nil {
 		return sessionUpsertStmts{}, func() {}, err
 	}
-	insFTS, err := prep("fts insert", `INSERT INTO sessions_fts (session_id, agent, name, body, search_terms) VALUES (?,?,?,?,?)`)
+	insFTS, err := prep("fts insert", `INSERT INTO sessions_fts
+		(session_id, agent, name, body, search_terms, ai_metadata, ai_search_terms)
+		VALUES (?,?,?,?,?,?,?)`)
 	if err != nil {
 		return sessionUpsertStmts{}, func() {}, err
 	}
 	return sessionUpsertStmts{
 		insSession:    insSession,
 		selOldRowid:   selOldRowid,
+		selAIMetadata: selAIMetadata,
 		delFTSByRowid: delFTSByRowid,
 		delFTSByKey:   delFTSByKey,
 		insFTS:        insFTS,
@@ -940,7 +1091,14 @@ func (s *Store) ListByProjectForAgentVisibility(projectID, agent string, include
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	return scanSessions(rows)
+	sessions, err := scanSessions(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.AttachCurrentAIMetadata(sessions); err != nil {
+		return nil, err
+	}
+	return sessions, nil
 }
 
 // ProjectSummary is a rolled-up view of one project for the all-projects picker.
@@ -1124,7 +1282,14 @@ func (s *Store) SearchContextForAgentVisibility(ctx context.Context, query, proj
 	}
 	defer func() { _ = rows.Close() }()
 
-	return scanSessions(rows)
+	sessions, err := scanSessions(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.AttachCurrentAIMetadata(sessions); err != nil {
+		return nil, err
+	}
+	return sessions, nil
 }
 
 func kindVisibilitySQL(includeHidden bool) string {
@@ -1173,7 +1338,9 @@ func (s *Store) SnippetsContext(ctx context.Context, query string, sessions []Se
 		return out, nil
 	}
 
-	q := `SELECT agent, session_id, body, snippet(sessions_fts, 3, char(2), char(3), '…', 12)
+	q := `SELECT agent, session_id, body, ai_metadata,
+		snippet(sessions_fts, 3, char(2), char(3), '…', 12),
+		snippet(sessions_fts, 5, char(2), char(3), '…', 12)
 		FROM sessions_fts
 		WHERE sessions_fts MATCH ? AND (` + strings.Join(clauses, ` OR `) + `)`
 	rows, err := s.db.QueryContext(ctx, q, args...)
@@ -1184,12 +1351,17 @@ func (s *Store) SnippetsContext(ctx context.Context, query string, sessions []Se
 
 	cjkNeedles := CJKNeedlesFromQuery(query)
 	for rows.Next() {
-		var agent, sessionID, body, snippet string
-		if err := rows.Scan(&agent, &sessionID, &body, &snippet); err != nil {
+		var agent, sessionID, body, aiText, bodySnippet, aiSnippet string
+		if err := rows.Scan(&agent, &sessionID, &body, &aiText, &bodySnippet, &aiSnippet); err != nil {
 			return nil, err
 		}
+		snippet := bodySnippet
 		if readable := readableCJKSnippet(body, cjkNeedles); readable != "" {
 			snippet = readable
+		} else if readable := readableCJKSnippet(aiText, cjkNeedles); readable != "" {
+			snippet = "✦ AI-generated: " + readable
+		} else if aiSnippet != "" {
+			snippet = "✦ AI-generated: " + aiSnippet
 		}
 		out[FingerprintKey(agent, sessionID)] = snippet
 	}

@@ -72,8 +72,36 @@ func nativePreviewCmd(registry *factory.Registry, indexed sessionindex.Session, 
 		if err != nil {
 			return nativePreviewMsg{seq: seq, blocked: true}
 		}
+		if !reveal {
+			markdown = decorateMaskedPreview(markdown, indexed)
+		}
 		return nativePreviewMsg{seq: seq, markdown: markdown, revealed: reveal}
 	}
+}
+
+func decorateMaskedPreview(markdown string, indexed sessionindex.Session) string {
+	if strings.TrimSpace(indexed.AITitle) == "" && strings.TrimSpace(indexed.AISummary) == "" && len(indexed.AITags) == 0 {
+		return markdown
+	}
+	escape := strings.NewReplacer(`\`, `\\`, `*`, `\*`, `_`, `\_`, `[`, `\[`, `]`, `\]`, "`", "\\`")
+	var generated strings.Builder
+	generated.WriteString("> **✦ AI-generated metadata — may be wrong**\n>\n")
+	if indexed.AITitle != "" {
+		generated.WriteString("> **Title:** " + escape.Replace(indexed.AITitle) + "\n")
+	}
+	if indexed.AISummary != "" {
+		generated.WriteString("> **Summary:** " + escape.Replace(indexed.AISummary) + "\n")
+	}
+	if len(indexed.AITags) > 0 {
+		tags := make([]string, len(indexed.AITags))
+		for i, tag := range indexed.AITags {
+			tags[i] = escape.Replace(tag)
+		}
+		generated.WriteString("> **Tags:** " + strings.Join(tags, ", ") + "\n")
+	}
+	generated.WriteString("\n---\n\n")
+	generated.WriteString(markdown)
+	return generated.String()
 }
 
 func (m sessionTUI) applyNativePreview(msg nativePreviewMsg) (tea.Model, tea.Cmd) {

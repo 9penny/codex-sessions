@@ -64,7 +64,8 @@ func CJKQueryExpression(run string) string {
 	if len(terms) == 0 {
 		return ""
 	}
-	return `search_terms:"` + strings.Join(terms, " ") + `"`
+	phrase := strings.Join(terms, " ")
+	return `{search_terms ai_search_terms}:"` + phrase + `"`
 }
 
 // CJKNeedlesFromQuery reconstructs the readable Han runs embedded in an FTS query so snippet
@@ -107,7 +108,15 @@ func CJKNeedlesFromQuery(query string) []string {
 		}
 	}
 	flush()
-	return needles
+	seen := make(map[string]bool, len(needles))
+	unique := needles[:0]
+	for _, needle := range needles {
+		if !seen[needle] {
+			seen[needle] = true
+			unique = append(unique, needle)
+		}
+	}
+	return unique
 }
 
 func encodeHanUnigram(r rune) string {

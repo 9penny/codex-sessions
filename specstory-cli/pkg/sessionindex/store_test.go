@@ -130,6 +130,51 @@ func TestAIMetadataCandidatesTrackSourceFingerprint(t *testing.T) {
 	}
 }
 
+func TestCurrentAIMetadataIsDisplayedAndSearchableUntilSourceChanges(t *testing.T) {
+	s := openTemp(t)
+	session := newSession("codex", "ai-search", "proj-a", "Native title", "ordinary native body")
+	session.IndexVersion = 9
+	if err := s.Upsert(session); err != nil {
+		t.Fatal(err)
+	}
+	metadata := AIMetadata{
+		Agent: "codex", SessionID: session.SessionID, SourceSize: session.Size, SourceMtime: session.Mtime,
+		SourceIndexVersion: session.IndexVersion, PromptVersion: CurrentAIPromptVersion, Model: "test-model",
+		Title: "Generated needle title", Summary: "修复数据库连接泄漏", Tags: []string{"generatedtag", "连接池"},
+		EnrichedAt: "2026-08-15T00:00:00Z",
+	}
+	if err := s.UpsertAIMetadata(metadata); err != nil {
+		t.Fatal(err)
+	}
+
+	listed, err := s.ListByProjectForAgentVisibility("proj-a", "codex", false)
+	if err != nil || len(listed) != 1 || listed[0].AITitle != metadata.Title || listed[0].AISummary != metadata.Summary {
+		t.Fatalf("listed=%+v err=%v; want current AI metadata", listed, err)
+	}
+	for _, query := range []string{"generatedtag", CJKQueryExpression("数据库连接")} {
+		hits, err := s.SearchContextForAgentVisibility(context.Background(), query, "", "codex", false)
+		if err != nil || len(hits) != 1 || hits[0].AITitle != metadata.Title {
+			t.Fatalf("Search(%q)=%+v err=%v; want AI metadata hit", query, hits, err)
+		}
+	}
+	snippets, err := s.Snippets("generatedtag", listed)
+	if err != nil || !strings.Contains(snippets[FingerprintKey("codex", session.SessionID)], "AI-generated") {
+		t.Fatalf("AI snippet=%+v err=%v", snippets, err)
+	}
+
+	session.Mtime++
+	if err := s.Upsert(session); err != nil {
+		t.Fatal(err)
+	}
+	listed, err = s.ListByProjectForAgentVisibility("proj-a", "codex", false)
+	if err != nil || len(listed) != 1 || listed[0].AITitle != "" {
+		t.Fatalf("stale listed=%+v err=%v; AI metadata should be hidden", listed, err)
+	}
+	if hits, err := s.Search("generatedtag", ""); err != nil || len(hits) != 0 {
+		t.Fatalf("stale AI search=%+v err=%v; want no hit", hits, err)
+	}
+}
+
 func TestDefaultQueriesHideBackgroundSessions(t *testing.T) {
 	s := openTemp(t)
 
@@ -452,6 +497,18 @@ func TestOpenMigratesLegacyFTSTableForCJKSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustUpsert(t, legacy, newSession("codex", "legacy", "proj-a", "Legacy", "连续中文搜索"))
+	legacySession, ok, err := legacy.GetSession("codex", "legacy")
+	if err != nil || !ok {
+		t.Fatalf("GetSession: ok=%v err=%v", ok, err)
+	}
+	if err := legacy.UpsertAIMetadata(AIMetadata{
+		Agent: "codex", SessionID: "legacy", SourceSize: legacySession.Size, SourceMtime: legacySession.Mtime,
+		SourceIndexVersion: legacySession.IndexVersion, PromptVersion: CurrentAIPromptVersion,
+		Model: "test-model", Title: "Migrated AI", Summary: "kept through migration",
+		Tags: []string{"migratedtag"}, EnrichedAt: "2026-08-15T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	var rowid int64
 	if err := legacy.db.QueryRow(`SELECT fts_rowid FROM sessions WHERE agent = 'codex' AND session_id = 'legacy'`).Scan(&rowid); err != nil {
 		t.Fatal(err)
@@ -482,6 +539,9 @@ func TestOpenMigratesLegacyFTSTableForCJKSearch(t *testing.T) {
 	}
 	if body, err := migrated.SessionBody("codex", "legacy"); err != nil || body != "连续中文搜索" {
 		t.Fatalf("migrated body = %q, %v", body, err)
+	}
+	if hits, err := migrated.Search("migratedtag", ""); err != nil || len(hits) != 1 || hits[0].AITitle != "Migrated AI" {
+		t.Fatalf("migrated AI search: hits=%+v err=%v", hits, err)
 	}
 }
 

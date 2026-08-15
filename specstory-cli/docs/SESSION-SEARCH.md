@@ -5,7 +5,7 @@ focused. Command arguments seed the initial query.
 
 ## Search representation
 
-The derived index stores two redacted representations:
+The derived index stores redacted native conversation representations:
 
 - readable user/assistant text for English, technical-token matching, and snippets;
 - deterministic Han unigram/bigram tokens in a search-only field for useful Chinese substring
@@ -13,6 +13,11 @@ The derived index stores two redacted representations:
 
 Queries use the same deterministic normalization. Search-only tokens never appear in snippets or
 preview, and reasoning, tool arguments, and tool output are never searchable.
+
+When optional AI metadata is current for the exact source fingerprint, its validated title,
+summary, and tags are also indexed in dedicated FTS fields with the same Chinese normalization.
+AI-only snippets begin with `✦ AI-generated`; stale metadata immediately stops matching after a
+session changes. Search remains identical when enrichment is absent or unconfigured.
 
 ## Interaction
 

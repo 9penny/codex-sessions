@@ -14,8 +14,6 @@ import (
 	"github.com/specstoryai/getspecstory/specstory-cli/pkg/spi/factory"
 )
 
-const enrichmentPromptVersion = 1
-
 type metadataGenerator interface {
 	GenerateMetadata(context.Context, enrich.MetadataRequest) (enrich.MetadataResult, error)
 }
