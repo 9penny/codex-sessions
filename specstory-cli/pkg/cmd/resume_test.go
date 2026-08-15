@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,6 +60,63 @@ func TestQueryReady(t *testing.T) {
 		if got := queryReady(c.in); got != c.want {
 			t.Errorf("queryReady(%q) = %v, want %v", c.in, got, c.want)
 		}
+	}
+}
+
+func TestSearchFindsCJKSubstringsWithoutChangingEnglishBehavior(t *testing.T) {
+	store, err := sessionindex.Open(filepath.Join(t.TempDir(), "sessions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	sessions := []sessionindex.Session{
+		{
+			ProjectID: "project", Agent: "codex", SessionID: "cjk",
+			CreatedAt: "2026-08-15T01:00:00Z", UpdatedAt: "2026-08-15T01:00:00Z",
+			Kind: spi.SessionKindInteractive,
+			Name: "双语搜索", Body: "开始甲乙中文连续搜索功能结束 oauth callback",
+		},
+		{
+			ProjectID: "project", Agent: "codex", SessionID: "technical",
+			CreatedAt: "2026-08-15T00:00:00Z", UpdatedAt: "2026-08-15T00:00:00Z",
+			Kind: spi.SessionKindInteractive,
+			Name: "Technical", Body: "updated max-cpu parser",
+		},
+	}
+	for _, sess := range sessions {
+		if err := store.Upsert(sess); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, query := range []string{"开始", "中文", "结束", "中文 oauth", "中 oauth"} {
+		hits, err := store.Search(ftsQuery(query), "")
+		if err != nil {
+			t.Fatalf("Search(%q): %v", query, err)
+		}
+		if len(hits) != 1 || hits[0].SessionID != "cjk" {
+			t.Errorf("Search(%q) = %+v; want the CJK session", query, hits)
+		}
+	}
+	if hits, err := store.Search(ftsQuery("max-cpu"), ""); err != nil || len(hits) != 1 || hits[0].SessionID != "technical" {
+		t.Fatalf("technical-token search regressed: hits=%+v err=%v", hits, err)
+	}
+
+	hits, err := store.Search(ftsQuery("中文"), "")
+	if err != nil || len(hits) != 1 {
+		t.Fatalf("CJK snippet setup: hits=%+v err=%v", hits, err)
+	}
+	snippets, err := store.Snippets(ftsQuery("中文"), hits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snippet := snippets[sessionindex.FingerprintKey("codex", "cjk")]
+	if !strings.Contains(snippet, "\x02中文\x03") {
+		t.Errorf("CJK snippet does not highlight readable source text: %q", snippet)
+	}
+	if strings.Contains(snippet, "zh2") || strings.Contains(snippet, "search_terms") {
+		t.Errorf("CJK snippet exposed search-only normalization: %q", snippet)
 	}
 }
 

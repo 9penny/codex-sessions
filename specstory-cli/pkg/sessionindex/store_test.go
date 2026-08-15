@@ -335,6 +335,73 @@ func TestSearchAndSnippets(t *testing.T) {
 	}
 }
 
+func TestCJKSearchTermsPreserveOrderAndReadableSnippets(t *testing.T) {
+	s := openTemp(t)
+	mustUpsert(t, s, newSession("codex", "ordered", "proj-a", "中文", "甲乙，中间分隔，乙丙；目标甲乙丙"))
+	mustUpsert(t, s, newSession("codex", "split", "proj-a", "split", "甲乙，中间分隔，乙丙"))
+
+	query := CJKQueryExpression("甲乙丙")
+	hits, err := s.Search(query, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].SessionID != "ordered" {
+		t.Fatalf("ordered CJK search = %+v; want only the contiguous match", hits)
+	}
+	if needles := CJKNeedlesFromQuery(query); len(needles) != 1 || needles[0] != "甲乙丙" {
+		t.Fatalf("CJKNeedlesFromQuery() = %q; want [甲乙丙]", needles)
+	}
+
+	snippets, err := s.Snippets(query, hits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := snippets[FingerprintKey("codex", "ordered")]
+	if !strings.Contains(got, "\x02甲乙丙\x03") || strings.Contains(got, hanBigramPrefix) {
+		t.Fatalf("readable CJK snippet = %q", got)
+	}
+}
+
+func TestOpenMigratesLegacyFTSTableForCJKSearch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions.db")
+	legacy, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustUpsert(t, legacy, newSession("codex", "legacy", "proj-a", "Legacy", "连续中文搜索"))
+	var rowid int64
+	if err := legacy.db.QueryRow(`SELECT fts_rowid FROM sessions WHERE agent = 'codex' AND session_id = 'legacy'`).Scan(&rowid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.db.Exec(`DROP TABLE sessions_fts`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.db.Exec(`CREATE VIRTUAL TABLE sessions_fts USING fts5(
+		session_id UNINDEXED, agent UNINDEXED, name, body)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.db.Exec(`INSERT INTO sessions_fts(rowid, session_id, agent, name, body)
+		VALUES (?, 'legacy', 'codex', 'Legacy', '连续中文搜索')`, rowid); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open(legacy): %v", err)
+	}
+	t.Cleanup(func() { _ = migrated.Close() })
+	hits, err := migrated.Search(CJKQueryExpression("中文"), "")
+	if err != nil || len(hits) != 1 || hits[0].SessionID != "legacy" {
+		t.Fatalf("migrated CJK search: hits=%+v err=%v", hits, err)
+	}
+	if body, err := migrated.SessionBody("codex", "legacy"); err != nil || body != "连续中文搜索" {
+		t.Fatalf("migrated body = %q, %v", body, err)
+	}
+}
+
 // TestSoftDeleteSessionHidesFromReads verifies a soft-deleted session vanishes from every read
 // path (count, project list, search) while its siblings remain, and reports one row affected.
 func TestSoftDeleteSessionHidesFromReads(t *testing.T) {
