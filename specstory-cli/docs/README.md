@@ -3,6 +3,7 @@
 Current Codex Sessions documents:
 
 - [v0.1 implementation plan](V0.1-IMPLEMENTATION-PLAN.md)
+- [v0.1 release gate](V0.1-RELEASE-GATE.md)
 - [resume TUI](RESUME-TUI.md)
 - [session search](SESSION-SEARCH.md)
 - [derived sessions index](SESSIONS-DB.md)
