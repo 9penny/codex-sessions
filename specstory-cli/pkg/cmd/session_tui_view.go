@@ -9,9 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
 
-	"github.com/specstoryai/getspecstory/specstory-cli/pkg/session"
 	"github.com/specstoryai/getspecstory/specstory-cli/pkg/sessionindex"
-	"github.com/specstoryai/getspecstory/specstory-cli/pkg/spi/factory"
 )
 
 // ---- rendering ----
@@ -297,6 +295,11 @@ func (m sessionTUI) renderFooter() string {
 func (m sessionTUI) renderPreview() string {
 	var b strings.Builder
 	left := styBold.Render("Preview")
+	if m.previewRevealed {
+		left += styDim.Render(" · ") + styWarn.Render("RAW REVEALED")
+	} else {
+		left += styDim.Render(" · MASKED")
+	}
 	if s := m.readerSession; s != nil {
 		left += styDim.Render(" · ") + m.agentTag(s.Agent) +
 			styDim.Render(" · ") + sessionTitle(*s)
@@ -309,7 +312,12 @@ func (m sessionTUI) renderPreview() string {
 	b.WriteString("\n")
 	b.WriteString(strings.Repeat("─", m.lineWidth()))
 	b.WriteString("\n")
-	b.WriteString(styDim.Render(strings.Join([]string{"↑↓ scroll", "pgup/pgdn page", "r resume", "space/esc close"}, " · ")))
+	keys := []string{"↑↓ scroll", "pgup/pgdn page", "r resume"}
+	if m.readerSession != nil && !m.readerSession.IsCloud && !m.previewRevealed {
+		keys = append(keys, "R reveal raw")
+	}
+	keys = append(keys, "space/esc close")
+	b.WriteString(styDim.Render(strings.Join(keys, " · ")))
 	return b.String()
 }
 
@@ -503,23 +511,4 @@ func renderGlamour(md string, width int) string {
 		return md
 	}
 	return out
-}
-
-// sessionMarkdown returns the session as markdown for the preview — the real specstory
-// render when the session can be re-parsed (needs a cwd), else the plain FTS body.
-func sessionMarkdown(registry *factory.Registry, store *sessionindex.Store, s *sessionindex.Session) string {
-	if s.OriginCwd != "" {
-		if prov, err := registry.Get(s.Agent); err == nil {
-			if full, err := prov.GetAgentChatSession(s.OriginCwd, s.SessionID, false); err == nil &&
-				full != nil && full.SessionData != nil {
-				if md, err := session.GenerateMarkdownFromAgentSession(full.SessionData, false, true); err == nil {
-					return md
-				}
-			}
-		}
-	}
-	if body, _ := store.SessionBody(s.Agent, s.SessionID); strings.TrimSpace(body) != "" {
-		return "```\n" + body + "\n```"
-	}
-	return "_(no readable content for this session)_"
 }

@@ -355,7 +355,7 @@ func buildExchangesFromRecords(records []map[string]interface{}, workspaceRoot s
 				var input map[string]interface{}
 				if argumentsJSON != "" {
 					if err := json.Unmarshal([]byte(argumentsJSON), &input); err != nil {
-						slog.Warn("Failed to parse function call arguments", "error", err, "arguments", argumentsJSON)
+						slog.Warn("Failed to parse function call arguments", "error", err)
 						input = map[string]interface{}{"raw": argumentsJSON}
 					}
 				}
