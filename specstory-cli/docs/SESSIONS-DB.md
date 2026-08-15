@@ -482,12 +482,22 @@ already performs; the rest come from the lightweight enumeration ref.
 | `session_id` | No (`UNINDEXED`) | Join key back to `sessions`; stored in the row but not tokenized.                               |
 | `agent`      | No (`UNINDEXED`) | Join key back to `sessions`; stored in the row but not tokenized.                               |
 | `name`       | Yes              | Session description / first-message-derived name; tokenized + searchable.                       |
-| `body`       | Yes              | Full conversation text — the reconstruction-flattened user/agent turns; tokenized + searchable. |
+| `body`       | Yes              | Redacted user/assistant conversation text; kept readable for English search and snippets.       |
+| `search_terms` | Yes            | Search-only deterministic Han unigrams/bigrams encoded as ASCII tokens for Chinese substrings.  |
 
 `UNINDEXED` is an FTS5 per-column keyword meaning the column is **stored but excluded from the
 full-text index** — not "lacks a b-tree index" (FTS5 tables have no secondary b-tree indexes at
 all). The two join keys ride along in the row so a `MATCH` hit maps straight back to its
-`sessions` row without a separate lookup table. Default FTS5 tokenizer. Rows are
+`sessions` row without a separate lookup table. The readable columns retain FTS5's default
+tokenizer. `search_terms` adds overlapping Han bigrams (plus unigrams for mixed one-character
+queries), while queries apply the same deterministic transform and scope those tokens to that
+column. English words, prefixes, phrases, filenames, and technical identifiers keep their
+existing query path. Chinese snippets are cut from `body` and highlighted there, so encoded
+search-only tokens are never displayed.
+
+Databases created before `search_terms` are migrated atomically because FTS5 cannot add a
+column in place: the index is copied row-by-row into a replacement virtual table, existing
+rowids are preserved, and the old table is swapped only when the copy succeeds. Rows are
 inserted/replaced alongside their `sessions` row during
 `reindex`; deletion of a `sessions` row removes its `sessions_fts` row.
 
@@ -498,7 +508,7 @@ against `sessions_fts` has nothing to seek on and **scans the entire table** —
 stores each FTS row's rowid on its `sessions` row (`fts_rowid`) at insert time
 (`last_insert_rowid()`), and:
 
-- **Body reads** (`SessionBody`, the preview pane) join `sessions_fts ON rowid = sessions.fts_rowid`,
+- **Body reads** (`SessionBody`, retained for index diagnostics) join `sessions_fts ON rowid = sessions.fts_rowid`,
   an O(1) rowid lookup, with a one-time fallback to the by-key scan for rows whose `fts_rowid`
   is still NULL (written before the column existed; a `reindex` retires the fallback).
 - **Replace-before-insert** deletes the prior FTS row by `WHERE rowid = ?` rather than by the

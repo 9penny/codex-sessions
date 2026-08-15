@@ -50,7 +50,9 @@ func queryReady(input string) bool {
 // quoted, it is the committed phrase "poem txt" (adjacent, no prefix).
 //
 // Only letters and digits survive tokenization, so no FTS5 syntax character from the raw
-// input can reach MATCH — every query this builds is safe to execute.
+// input can reach MATCH — every query this builds is safe to execute. Han runs are the one
+// deliberate extension: they become generated, column-scoped bigram expressions so a
+// continuous Chinese token can match by substring.
 func ftsQuery(input string) string {
 	// Splitting on '"' yields alternating runs: even indexes are outside quotes, odd indexes
 	// are inside. An odd-indexed run that is also the LAST run means the closing quote hasn't
@@ -61,21 +63,81 @@ func ftsQuery(input string) string {
 		switch {
 		case i%2 == 0: // outside quotes: each word is its own loose, prefix-terminated term
 			for _, f := range strings.Fields(seg) {
+				if containsHan(f) {
+					parts = append(parts, mixedScriptQuery(f, true)...)
+					continue
+				}
 				if toks := fieldTokens(f); len(toks) > 0 {
 					parts = append(parts, strings.Join(toks, " + ")+"*")
 				}
 			}
 		case i == len(segs)-1: // open phrase (still typing): adjacency across all tokens + prefix last
+			if containsHan(seg) {
+				parts = append(parts, mixedScriptQuery(seg, true)...)
+				continue
+			}
 			if toks := segmentTokens(seg); len(toks) > 0 {
 				parts = append(parts, strings.Join(toks, " + ")+"*")
 			}
 		default: // closed phrase: exact adjacency, no prefix (a committed phrase)
+			if containsHan(seg) {
+				parts = append(parts, mixedScriptQuery(seg, false)...)
+				continue
+			}
 			if toks := segmentTokens(seg); len(toks) > 0 {
 				parts = append(parts, `"`+strings.Join(toks, " ")+`"`)
 			}
 		}
 	}
 	return strings.Join(parts, " ")
+}
+
+func containsHan(text string) bool {
+	for _, r := range text {
+		if unicode.Is(unicode.Han, r) {
+			return true
+		}
+	}
+	return false
+}
+
+// mixedScriptQuery splits Han and non-Han alphanumeric runs. Han text is transformed with
+// the same deterministic bigrams stored in sessions_fts.search_terms; other scripts retain
+// the existing prefix behavior.
+func mixedScriptQuery(text string, prefix bool) []string {
+	var parts []string
+	var run strings.Builder
+	runIsHan := false
+	flush := func() {
+		if run.Len() == 0 {
+			return
+		}
+		value := run.String()
+		if runIsHan {
+			if expr := sessionindex.CJKQueryExpression(value); expr != "" {
+				parts = append(parts, expr)
+			}
+		} else if prefix {
+			parts = append(parts, value+"*")
+		} else {
+			parts = append(parts, `"`+value+`"`)
+		}
+		run.Reset()
+	}
+	for _, r := range text {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			flush()
+			continue
+		}
+		isHan := unicode.Is(unicode.Han, r)
+		if run.Len() > 0 && isHan != runIsHan {
+			flush()
+		}
+		runIsHan = isHan
+		run.WriteRune(r)
+	}
+	flush()
+	return parts
 }
 
 // fieldTokens splits one whitespace-delimited field into its FTS5 tokens the way the index's

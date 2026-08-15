@@ -247,7 +247,8 @@ func (s *Store) ensureSchema() error {
 		session_id UNINDEXED,
 		agent UNINDEXED,
 		name,
-		body
+		body,
+		search_terms
 	);
 	`
 	if _, err := s.db.Exec(schema); err != nil {
@@ -277,6 +278,96 @@ func (s *Store) ensureSchema() error {
 	// idx_sessions_project_recent (project_id is its left prefix). Idempotent; a no-op
 	// on fresh databases that never had it.
 	s.runMigration(`DROP INDEX IF EXISTS idx_sessions_project`)
+	return s.ensureCJKSearchColumn()
+}
+
+// ensureCJKSearchColumn upgrades the standalone FTS table created by older versions. FTS5
+// virtual tables cannot add a column, so rows are copied into a replacement table while
+// preserving rowids (and therefore every sessions.fts_rowid link).
+func (s *Store) ensureCJKSearchColumn() error {
+	rows, err := s.db.Query(`PRAGMA table_info(sessions_fts)`)
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		found = found || name == "search_terms"
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err := tx.Exec(`DROP TABLE IF EXISTS sessions_fts_cjk_upgrade`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`CREATE VIRTUAL TABLE sessions_fts_cjk_upgrade USING fts5(
+		session_id UNINDEXED, agent UNINDEXED, name, body, search_terms)`); err != nil {
+		return err
+	}
+	oldRows, err := tx.Query(`SELECT rowid, session_id, agent, name, body FROM sessions_fts`)
+	if err != nil {
+		return err
+	}
+	insert, err := tx.Prepare(`INSERT INTO sessions_fts_cjk_upgrade
+		(rowid, session_id, agent, name, body, search_terms) VALUES (?,?,?,?,?,?)`)
+	if err != nil {
+		_ = oldRows.Close()
+		return err
+	}
+	defer func() { _ = insert.Close() }()
+	for oldRows.Next() {
+		var rowid int64
+		var sessionID, agent, name, body string
+		if err := oldRows.Scan(&rowid, &sessionID, &agent, &name, &body); err != nil {
+			_ = oldRows.Close()
+			return err
+		}
+		if _, err := insert.Exec(rowid, sessionID, agent, name, body, cjkSearchTerms(name+"\n"+body)); err != nil {
+			_ = oldRows.Close()
+			return err
+		}
+	}
+	if err := oldRows.Err(); err != nil {
+		_ = oldRows.Close()
+		return err
+	}
+	if err := oldRows.Close(); err != nil {
+		return err
+	}
+	if err := insert.Close(); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DROP TABLE sessions_fts`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`ALTER TABLE sessions_fts_cjk_upgrade RENAME TO sessions_fts`); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
 	return nil
 }
 
@@ -355,7 +446,8 @@ func upsertOne(st sessionUpsertStmts, sess Session) error {
 			}
 		}
 	}
-	res, err := st.insFTS.Exec(sess.SessionID, sess.Agent, sess.Name, sess.Body)
+	res, err := st.insFTS.Exec(sess.SessionID, sess.Agent, sess.Name, sess.Body,
+		cjkSearchTerms(sess.Name+"\n"+sess.Body))
 	if err != nil {
 		return fmt.Errorf("insert fts row: %w", err)
 	}
@@ -450,7 +542,7 @@ func prepareUpsert(tx *sql.Tx) (sessionUpsertStmts, func(), error) {
 	if err != nil {
 		return sessionUpsertStmts{}, func() {}, err
 	}
-	insFTS, err := prep("fts insert", `INSERT INTO sessions_fts (session_id, agent, name, body) VALUES (?,?,?,?)`)
+	insFTS, err := prep("fts insert", `INSERT INTO sessions_fts (session_id, agent, name, body, search_terms) VALUES (?,?,?,?,?)`)
 	if err != nil {
 		return sessionUpsertStmts{}, func() {}, err
 	}
@@ -883,7 +975,7 @@ func (s *Store) SnippetsContext(ctx context.Context, query string, sessions []Se
 		return out, nil
 	}
 
-	q := `SELECT agent, session_id, snippet(sessions_fts, 3, char(2), char(3), '…', 12)
+	q := `SELECT agent, session_id, body, snippet(sessions_fts, 3, char(2), char(3), '…', 12)
 		FROM sessions_fts
 		WHERE sessions_fts MATCH ? AND (` + strings.Join(clauses, ` OR `) + `)`
 	rows, err := s.db.QueryContext(ctx, q, args...)
@@ -892,14 +984,51 @@ func (s *Store) SnippetsContext(ctx context.Context, query string, sessions []Se
 	}
 	defer func() { _ = rows.Close() }()
 
+	cjkNeedles := CJKNeedlesFromQuery(query)
 	for rows.Next() {
-		var agent, sessionID, snippet string
-		if err := rows.Scan(&agent, &sessionID, &snippet); err != nil {
+		var agent, sessionID, body, snippet string
+		if err := rows.Scan(&agent, &sessionID, &body, &snippet); err != nil {
 			return nil, err
+		}
+		if readable := readableCJKSnippet(body, cjkNeedles); readable != "" {
+			snippet = readable
 		}
 		out[FingerprintKey(agent, sessionID)] = snippet
 	}
 	return out, rows.Err()
+}
+
+func readableCJKSnippet(body string, needles []string) string {
+	matchByte := -1
+	match := ""
+	for _, needle := range needles {
+		if at := strings.Index(body, needle); at >= 0 && (matchByte < 0 || at < matchByte) {
+			matchByte = at
+			match = needle
+		}
+	}
+	if matchByte < 0 {
+		return ""
+	}
+	bodyRunes := []rune(body)
+	matchStart := len([]rune(body[:matchByte]))
+	matchEnd := matchStart + len([]rune(match))
+	const contextRunes = 30
+	start := max(0, matchStart-contextRunes)
+	end := min(len(bodyRunes), matchEnd+contextRunes)
+	var snippet strings.Builder
+	if start > 0 {
+		snippet.WriteRune('…')
+	}
+	snippet.WriteString(string(bodyRunes[start:matchStart]))
+	snippet.WriteByte('\x02')
+	snippet.WriteString(string(bodyRunes[matchStart:matchEnd]))
+	snippet.WriteByte('\x03')
+	snippet.WriteString(string(bodyRunes[matchEnd:end]))
+	if end < len(bodyRunes) {
+		snippet.WriteRune('…')
+	}
+	return snippet.String()
 }
 
 // prefixed qualifies each comma-separated column in cols with the given table alias,
