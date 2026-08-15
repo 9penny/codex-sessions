@@ -47,7 +47,9 @@ const (
 	//   7: recover Cursor session cwds (match their project-hash dir against other providers'
 	//      cwds) so Cursor sessions bucket under their real project instead of "unknown" —
 	//      existing Cursor rows stay "unknown" until re-parsed, so bump to re-bucket them
-	reindexVersion = 7
+	//   8: persist native session kind so background Codex subagent/exec sessions can be hidden
+	//      from default browse and search queries
+	reindexVersion = 8
 )
 
 // CreateReindexCommand builds the `specstory reindex` command: a full, from-scratch
@@ -576,6 +578,7 @@ func (li *LiveIndexer) Record(agentID string, sess *spi.AgentChatSession) {
 		TotalTurns:   totalTurns,
 		Slug:         sess.Slug,
 		OriginCwd:    li.cwd,
+		Kind:         spi.SessionKindInteractive,
 		IndexVersion: reindexVersion,
 		IndexedAt:    li.indexedAt,
 		Body:         flattenBody(data),
@@ -618,6 +621,7 @@ func buildSession(item reindexItem, cache *projectIDCache, indexedAt string) ses
 		Name:         ref.Name,
 		NativePath:   ref.NativePath,
 		OriginCwd:    ref.OriginCwd,
+		Kind:         ref.Kind,
 		Size:         item.size, // captured during the freshness check (no re-stat)
 		Mtime:        item.mtime,
 		IndexVersion: reindexVersion,

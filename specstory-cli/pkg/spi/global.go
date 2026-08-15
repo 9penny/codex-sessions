@@ -10,6 +10,18 @@ import (
 	"sync/atomic"
 )
 
+// SessionKind identifies how a native session was created. Providers should return
+// SessionKindUnknown for metadata they do not recognize so callers can make an explicit
+// visibility decision instead of accidentally treating a new background source as interactive.
+type SessionKind string
+
+const (
+	SessionKindUnknown     SessionKind = "unknown"
+	SessionKindInteractive SessionKind = "interactive"
+	SessionKindSubagent    SessionKind = "subagent"
+	SessionKindExec        SessionKind = "exec"
+)
+
 // GlobalSessionRef is a lightweight, project-discovering reference to a single
 // native session, returned by Provider.ListAllAgentChatSessions.
 //
@@ -28,6 +40,7 @@ type GlobalSessionRef struct {
 	Name       string // human-readable description (may be empty)
 	NativePath string // absolute path the provider opens to read this session
 	OriginCwd  string // working directory the session was launched from (-> project_id)
+	Kind       SessionKind
 }
 
 // PathSessionReader is an OPTIONAL capability a Provider may implement: parse a single
