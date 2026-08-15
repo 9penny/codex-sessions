@@ -27,16 +27,19 @@ it replaces the old plain numbered-menu selection in `pkg/cmd/resume.go`.
 - **Dense / sparse view modes.** Dense = more sessions, less per-session detail; sparse = more
   detail, fewer sessions. Toggle is easy/obvious; the choice is **remembered** in
   `~/.specstory/cli/config.toml` `[resume] view_mode` (via `config.SaveResumePrefs`).
-- **Preview (`space`)** opens a scrollable, **glamour-rendered** reader of the session — the
-  real specstory markdown (`session.GenerateMarkdownFromAgentSession` → `glamour`), falling
-  back to the stored FTS body (`Store.SessionBody`) for sessions that can't be re-parsed (no
-  resolvable cwd, e.g. Cursor). Identical to what `search` shows. `r` resumes from the preview.
+- **Preview (`space`)** parses the native Codex JSONL on demand and opens a scrollable,
+  **glamour-rendered** reader. It is masked before reaching the TUI model; uppercase `R`
+  explicitly reveals the current preview in memory until it is closed. An unreadable source or
+  redaction failure blocks preview rather than falling back to the FTS body.
 - **All-projects view rolls up by relative date** (Today · Yesterday · Previous 7 days ·
   Previous 30 days · Older) by each project's latest activity, showing per-agent session counts
   (`Store.ListProjects`); the user expands a project to see its sessions.
-- **`r` resumes; `enter` is deliberately inert in the lists.** Resuming launches an agent, so
-  it must be an explicit keystroke (`r`) — a stray `↵` can't accidentally start a session. The
-  one place `↵` *does* commit is the final target-agent step (an explicit confirmation screen).
+- **`enter` and `r` resume; `n` starts a new Codex session.** Codex Sessions launches in the
+  selected session's recorded project directory. A missing directory is explained and blocks
+  launch rather than silently falling back to the caller's cwd.
+- **`h` explicitly shows background sessions.** Subagent, `exec`, and unknown-source sessions
+  remain excluded from default lists, project counts, and search. When enabled, the header says
+  `HIDDEN SHOWN` and each background row displays its kind; this state lasts only for the process.
 - **`d` deletes (soft), behind a `y/N` confirmation.** In a session list (or a cross-project
   search hit) `d` removes the highlighted **session**; in the all-projects browser it removes
   the highlighted **project** (all its sessions at once). This is a *soft delete*: the native
@@ -85,12 +88,12 @@ it replaces the old plain numbered-menu selection in `pkg/cmd/resume.go`.
   via `SaveResumePrefs`); glamour preview (`space`); full-text search (`/` → FTS, scoped to
   the project).
 - Missing/empty `sessions.db` → `reindex` (normal progress UI) then continue.
-- Resume a session (`r`) → target-agent step (pre-selected by `resume <agent>`; else the
+- Resume a session (`enter`/`r`) → target-agent step (pre-selected by `resume <agent>`; else the
   last-resumed agent; else the session's own agent) → hands off to the existing
   `prepareResumeTarget` + `ExecAgentAndWatch`.
-- Keys: `↑↓`/`jk` move · `r` resume · `space` preview · `/` search · `a` agent · `d` delete
-  (soft, confirmed) · `v` dense/sparse · `tab` all-projects · `q`/`esc` quit. (`↵` is inert in
-  the list.)
+- Keys: `↑↓`/`jk` move · `enter`/`r` resume · `n` new Codex session · `space` preview · `/`
+  search · `a` agent · `h` show/hide background · `d` delete (soft, confirmed) · `v`
+  dense/sparse · `tab` all-projects · `q`/`esc` quit.
 
 **Deferred to Stage B / follow-up:** empty current project currently shows a message rather
 than jumping to all-projects (that view *is* Stage B); the `tab` scope toggle; and persisting

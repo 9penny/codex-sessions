@@ -74,21 +74,17 @@ func startIndexWarm(p *tea.Program, projectID string, builtFresh bool) context.C
 // selectResumeViaTUI runs the picker for the current project and returns the chosen
 // resume plan (or nil if the user cancelled). On a successful selection it persists the
 // view-mode and target-agent preferences to the user config.
-func selectResumeViaTUI(registry *factory.Registry, store *sessionindex.Store, projectID, projectName, presetTo string, builtFresh bool, pinned *sessionindex.Session, localOnly bool) (*resumePlan, error) {
+func selectResumeViaTUI(registry *factory.Registry, store *sessionindex.Store, projectID, projectName, projectCwd, presetTo string, builtFresh bool, pinned *sessionindex.Session, localOnly bool) (*resumePlan, error) {
 	sessions, err := store.ListByProject(projectID)
 	if err != nil {
 		return nil, fmt.Errorf("loading sessions: %w", err)
 	}
 	// An empty current project is fine — the picker opens in the all-projects browser.
-	// Only bail when the whole index is empty (nothing to resume anywhere). A pinned session
-	// (--session) is itself something to resume, so skip the bail even on an empty index.
-	if pinned == nil {
+	// The upstream picker still bails when the whole index is empty. Local-only mode remains
+	// open because `n` can start the user's first Codex session.
+	if pinned == nil && !localOnly {
 		if total, _ := store.Count(); total == 0 {
-			reindexCommand := "specstory reindex"
-			if localOnly {
-				reindexCommand = "csessions reindex"
-			}
-			fprintf(os.Stderr, "\nNo agent sessions indexed yet. Run an agent here, then try again (or `%s`).\n", reindexCommand)
+			fprintf(os.Stderr, "\nNo agent sessions indexed yet. Run an agent here, then try again (or `specstory reindex`).\n")
 			return nil, nil
 		}
 	}
@@ -148,6 +144,7 @@ func selectResumeViaTUI(registry *factory.Registry, store *sessionindex.Store, p
 		viewMode:      viewMode,
 		pinnedSession: pinned,
 		localOnly:     localOnly,
+		homeCwd:       projectCwd,
 	})
 	p := tea.NewProgram(model)
 	cancelWarm := startIndexWarm(p, projectID, builtFresh)
@@ -160,7 +157,17 @@ func selectResumeViaTUI(registry *factory.Registry, store *sessionindex.Store, p
 	if !ok {
 		return nil, fmt.Errorf("resume picker returned unexpected model type %T", final)
 	}
-	if rm.result.cancelled || rm.result.session == nil {
+	if rm.result.cancelled {
+		return nil, nil
+	}
+	if rm.result.newSession {
+		codex, err := registry.Get("codex")
+		if err != nil {
+			return nil, fmt.Errorf("Codex CLI provider is unavailable: %w", err)
+		}
+		return &resumePlan{to: codex, toID: "codex", fromCwd: rm.result.newCwd, newSession: true}, nil
+	}
+	if rm.result.session == nil {
 		return nil, nil
 	}
 
@@ -300,7 +307,7 @@ func colorForAgent(id string) color.Color {
 // enterBrowser switches to the all-projects browser, loading the project rollup lazily.
 func (m *sessionTUI) enterBrowser() {
 	if !m.projectsLoaded {
-		if ps, err := m.store.ListProjects(); err == nil {
+		if ps, err := m.store.ListProjectsVisibility(m.showHidden); err == nil {
 			m.projects = ps
 		} else {
 			slog.Debug("session browser: failed to list projects", "error", err)
@@ -313,6 +320,9 @@ func (m *sessionTUI) enterBrowser() {
 
 // gotoHome returns the session list to the current directory's project.
 func (m *sessionTUI) gotoHome() {
+	if sessions, err := m.store.ListByProjectVisibility(m.homeProjectID, m.showHidden); err == nil {
+		m.homeSessions = sessions
+	}
 	m.projectID, m.projectName = m.homeProjectID, m.homeProjectName
 	m.all = m.homeSessions
 	m.cloudAll = nil // cloud rows are per-project; a fresh fetch repopulates them (fire-on-drill)
@@ -327,7 +337,7 @@ func (m *sessionTUI) gotoHome() {
 
 // drillInto opens a project's session list from the browser.
 func (m *sessionTUI) drillInto(p sessionindex.ProjectSummary) {
-	sessions, err := m.store.ListByProject(p.ProjectID)
+	sessions, err := m.store.ListByProjectVisibility(p.ProjectID, m.showHidden)
 	if err != nil {
 		slog.Debug("session browser: failed to list project sessions", "project", p.ProjectID, "error", err)
 		return
@@ -393,6 +403,21 @@ func (m sessionTUI) updateProjects(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.projSearching = true
 		m.projSearch.SetValue(m.projSearchQuery)
 		return m, m.projSearch.Focus()
+	case "n":
+		if m.projCursor >= 0 && m.projCursor < len(m.projFiltered) {
+			p := m.projFiltered[m.projCursor]
+			if sessions, err := m.store.ListByProjectVisibility(p.ProjectID, m.showHidden); err == nil {
+				for _, sess := range sessions {
+					if cwd, ok := usableProjectCwd(sess.OriginCwd); ok {
+						return m.beginNewSession(cwd)
+					}
+				}
+			}
+			return m.beginNewSession("")
+		}
+		return m.beginNewSession(m.homeCwd)
+	case "h":
+		return m, m.toggleHiddenVisibility()
 	case "u":
 		if cmd := m.upgradeCmd(); cmd != nil {
 			return m, cmd
@@ -524,6 +549,9 @@ func (m sessionTUI) renderProjects() string {
 	var b strings.Builder
 
 	left := m.headerLeft("all projects")
+	if m.showHidden {
+		left += styDim.Render("  ·  ") + styWarn.Render("HIDDEN SHOWN")
+	}
 	right := styDim.Render(fmt.Sprintf("%d projects", len(m.projFiltered)))
 	b.WriteString(headerRow(left, right, m.lineWidth()) + "\n")
 	b.WriteString(strings.Repeat("─", m.lineWidth()) + "\n")
@@ -560,7 +588,13 @@ func (m sessionTUI) renderProjects() string {
 		b.WriteString(m.projSearch.View() + "    " + styFaint.Render("esc clear · enter apply"))
 		return b.String()
 	}
-	keys := []string{"↑↓ move", "↵ open", "/ search sessions", "p filter projects", "d delete"}
+	if m.localOnly {
+		b.WriteString(styDim.Render(strings.Join([]string{
+			"↑↓ move", "↵ open", "n new", "/ search", m.hiddenKeyHint(), "q quit",
+		}, " · ")))
+		return b.String()
+	}
+	keys := []string{"↑↓ move", "↵ open", "n new", "/ search sessions", "p filter projects", m.hiddenKeyHint(), "d delete"}
 	if !m.startedInBrowser {
 		keys = append(keys, "tab this project")
 	}
@@ -731,19 +765,24 @@ func (m sessionTUI) updateGlobalResults(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 		m.globalCursor = len(m.globalResults) - 1
 		m.clampGlobalScroll()
 		return m, m.requestVisibleSnippets(modeProjects)
-	case "r":
-		// Resume the highlighted hit (enter is a no-op, mirroring the list).
+	case "r", "enter":
+		// Resume the highlighted hit.
 		if sel := m.globalSelected(); sel != nil {
 			return m.beginResume(sel)
 		}
-	// Enter is silently aliased to space so either key previews a hit (the hint only
-	// advertises space). Mirrors the session list's preview binding.
-	case " ", "space", "enter":
+	case "n":
+		if sel := m.globalSelected(); sel != nil {
+			return m.beginNewSession(sel.OriginCwd)
+		}
+		return m.beginNewSession(m.homeCwd)
+	case " ", "space":
 		if sel := m.globalSelected(); sel != nil {
 			return m.openPreview(sel)
 		}
 	case "a":
 		return m, m.cycleAgent()
+	case "h":
+		return m, m.toggleHiddenVisibility()
 	case "m":
 		return m, m.cycleMachine()
 	case "v":
@@ -856,6 +895,9 @@ func (m sessionTUI) renderGlobalResults() string {
 		scope = styDim.Render("project: ") + stySel.Render(m.globalScopeName)
 	}
 	left := m.headerLeft(scope) + styDim.Render("  ·  ") + m.agentScope()
+	if m.showHidden {
+		left += styDim.Render("  ·  ") + styWarn.Render("HIDDEN SHOWN")
+	}
 	if ml := m.machineScopeLabel(); ml != "" {
 		left += styDim.Render("  ·  ") + styDim.Render("machine: ") + stySel.Render(ml)
 	}
@@ -923,7 +965,13 @@ func (m sessionTUI) renderGlobalResults() string {
 		b.WriteString(m.globalInput.View() + "    " + styFaint.Render(inputHint))
 		return b.String()
 	}
-	keys := []string{"↑↓ move", "r resume", "space preview", "a agent"}
+	if m.localOnly {
+		b.WriteString(styDim.Render(strings.Join([]string{
+			"↑↓ move", "↵ resume", "n new", "space preview", "/ search", m.hiddenKeyHint(), "q quit",
+		}, " · ")))
+		return b.String()
+	}
+	keys := []string{"↑↓ move", "↵/r resume", "n new", "space preview", "a agent", m.hiddenKeyHint()}
 	if len(m.machineCycle) > 1 {
 		keys = append(keys, "m machine")
 	}

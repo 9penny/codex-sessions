@@ -43,7 +43,7 @@ The search input is the footer line (bottom), results above, consistent with `re
    codex    1w   intent-server   …the worker pegs …max… …cpu… at 100% during…
    gemini   3w   stoa-cli        …cap …cpu… usage; the …max… concurrency was…
  ─────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · r resume · space preview · a agent · d delete · v dense · / edit search · esc back · q quit
+ ↑↓ move · ↵/r resume · n new · space preview · a agent · h show hidden · d delete · v dense · / edit search · esc back · q quit
  / max cpu▌
 ```
 

@@ -211,6 +211,7 @@ func searchDebounce(seq int, kind tuiMode) tea.Cmd {
 // runSearch returns a command that performs the FTS query off the UI thread.
 func (m sessionTUI) runSearch(seq int, kind tuiMode, ctx context.Context) tea.Cmd {
 	store := m.store
+	showHidden := m.showHidden
 	query, projectID := m.searchQuery, m.projectID
 	if kind == modeProjects {
 		query, projectID = m.globalQuery, m.globalScopeID // "" = all projects, else scoped
@@ -220,7 +221,7 @@ func (m sessionTUI) runSearch(seq int, kind tuiMode, ctx context.Context) tea.Cm
 		if !queryReady(query) {
 			return searchResultMsg{seq: seq, kind: kind}
 		}
-		sessions, _ := store.SearchContext(ctx, fq, projectID)
+		sessions, _ := store.SearchContextVisibility(ctx, fq, projectID, showHidden)
 		return searchResultMsg{seq: seq, kind: kind, sessions: sessions}
 	}
 }
