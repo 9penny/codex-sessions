@@ -51,6 +51,9 @@ This includes implementation under `pkg/cloud`, `pkg/analytics`, `pkg/telemetry`
 `main.go`. Keeping a symbol buildable does not make it reachable: only `createLocalCommandTree`
 defines the executable surface.
 
+Inherited public issue forms are retained under `.github/archived-issue-templates` rather than
+presented as active GitHub issue choices.
+
 ## Documentation archive
 
 Documents not listed as current in [docs/README.md](README.md), plus the repository-level `lore/`

@@ -1,0 +1,48 @@
+name: Bug report
+description: Report a reproducible Codex Sessions problem
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Codex session files can contain prompts, source code, paths, and credentials.
+        Never attach a real session, database, config file, API key, or unredacted screenshot.
+        Prefer a synthetic fixture with all private values replaced.
+  - type: input
+    id: version
+    attributes:
+      label: Codex Sessions version
+      placeholder: Output of `csessions version`
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      options:
+        - Linux
+        - WSL
+        - SSH terminal
+        - Unsupported platform
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction with synthetic data
+      description: Exact commands or keys, using placeholders instead of private content.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Do not paste transcripts, API configuration, native paths, or database files.
+      render: shell
