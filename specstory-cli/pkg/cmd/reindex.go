@@ -48,10 +48,10 @@ const (
 	//   7: recover Cursor session cwds (match their project-hash dir against other providers'
 	//      cwds) so Cursor sessions bucket under their real project instead of "unknown" —
 	//      existing Cursor rows stay "unknown" until re-parsed, so bump to re-bucket them
-//   8: persist native session kind so background Codex subagent/exec sessions can be hidden
-//      from default browse and search queries
-//   9: index only redacted user/assistant text; omit thinking, tool calls, and tool output
-reindexVersion = 9
+	//   8: persist native session kind so background Codex subagent/exec sessions can be hidden
+	//      from default browse and search queries
+	//   9: index only redacted user/assistant text; omit thinking, tool calls, and tool output
+	reindexVersion = 9
 )
 
 // CreateReindexCommand builds the `specstory reindex` command: a full, from-scratch

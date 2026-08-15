@@ -74,7 +74,7 @@ func startIndexWarm(p *tea.Program, projectID string, builtFresh bool) context.C
 // selectResumeViaTUI runs the picker for the current project and returns the chosen
 // resume plan (or nil if the user cancelled). On a successful selection it persists the
 // view-mode and target-agent preferences to the user config.
-func selectResumeViaTUI(registry *factory.Registry, store *sessionindex.Store, projectID, projectName, presetTo string, builtFresh bool, pinned *sessionindex.Session) (*resumePlan, error) {
+func selectResumeViaTUI(registry *factory.Registry, store *sessionindex.Store, projectID, projectName, presetTo string, builtFresh bool, pinned *sessionindex.Session, localOnly bool) (*resumePlan, error) {
 	sessions, err := store.ListByProject(projectID)
 	if err != nil {
 		return nil, fmt.Errorf("loading sessions: %w", err)
@@ -137,6 +137,7 @@ func selectResumeViaTUI(registry *factory.Registry, store *sessionindex.Store, p
 		lastAgent:     lastAgent,
 		viewMode:      viewMode,
 		pinnedSession: pinned,
+		localOnly:     localOnly,
 	})
 	p := tea.NewProgram(model)
 	cancelWarm := startIndexWarm(p, projectID, builtFresh)

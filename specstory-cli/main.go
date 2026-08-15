@@ -72,6 +72,11 @@ var noRedactSecrets bool        // flag to disable secret redaction in markdown 
 // Run Mode State
 var lastRunSessionID string // tracks the session ID from the most recent run command for deep linking
 
+// archivedCloudShutdownEnabled is intentionally left false. It keeps the inherited
+// SpecStory shutdown implementation buildable for reference without putting it on the
+// Codex Sessions runtime path.
+var archivedCloudShutdownEnabled bool
+
 // pluralSession returns "session" or "sessions" based on count for proper grammar
 func pluralSession(count int) string {
 	if count == 1 {
@@ -215,56 +220,65 @@ specstory watch`
 			// Set silent mode for user messages
 			log.SetSilent(silent)
 
-			// Initialize cloud sync manager
-			cloud.InitSyncManager(!noCloudSync)
-			cloud.SetSilent(silent)
-			cloud.SetClientVersion(version)
-			// Set custom cloud URL if provided (otherwise cloud package uses its default)
-			if cloudURL != "" {
-				cloud.SetAPIBaseURL(cloudURL)
-			}
-
-			// If --cloud-token flag was provided, verify the refresh token works
-			// This bypasses normal authentication and uses the token for this session only
-			if cloudToken != "" {
-				slog.Info("Using session-only refresh token from --cloud-token flag")
-				if err := cloud.SetSessionRefreshToken(cloudToken); err != nil {
-					fmt.Fprintln(os.Stderr) // Visual separation
-					fmt.Fprintln(os.Stderr, "❌ Failed to authenticate with the provided token:")
-					fmt.Fprintf(os.Stderr, "   %v\n", err)
-					fmt.Fprintln(os.Stderr)
-					fmt.Fprintln(os.Stderr, "💡 The token may be invalid, expired, or revoked.")
-					fmt.Fprintln(os.Stderr, "   Please check your token and try again, or use 'specstory login' for interactive authentication.")
-					fmt.Fprintln(os.Stderr)
-					return fmt.Errorf("authentication failed with provided token")
-				}
-				if !silent {
-					fmt.Println()
-					fmt.Println("🔑 Authenticated using provided refresh token (session-only)")
-					fmt.Println()
-				}
-			}
-
-			// Validate that --only-cloud-sync requires authentication
-			if onlyCloudSync && !cloud.IsAuthenticated() {
-				return utils.ValidationError{Message: "--only-cloud-sync requires authentication. Please run 'specstory login' first"}
-			}
-
 			return nil
 		},
 		Run: func(c *cobra.Command, args []string) {
-			// Track help command usage (when no command is specified)
-			analytics.TrackEvent(analytics.EventHelpCommand, analytics.Properties{
-				"help_topic":  "general",
-				"help_reason": "requested",
-			})
 			// If no command is specified, show logo then help
 			cmdpkg.DisplayLogoAndHelp(c)
 		},
 	}
 }
 
+// createLocalCommandTree is the complete executable surface for Codex Sessions v0.1.
+// Inherited commands remain compiled and tested as reference code, but they are not registered.
+func createLocalCommandTree() *cobra.Command {
+	root := createRootCommand()
+	root.Long = "SpecStory provides local search and resume access to Codex CLI sessions."
+	root.Example = `# Search local Codex CLI sessions
+specstory search "query"
+
+# Resume a local Codex CLI session
+specstory resume codex`
+	root.Version = version
+	root.SetVersionTemplate("{{.Version}} (SpecStory)")
+	helpCmd := cmdpkg.CreateHelpCommand(root)
+	root.SetHelpCommand(helpCmd)
+	root.AddCommand(
+		helpCmd,
+		cmdpkg.CreateLocalResumeCommand(),
+		cmdpkg.CreateReindexCommand(),
+		cmdpkg.CreateLocalSearchCommand(),
+		cmdpkg.CreateVersionCommand(version),
+	)
+
+	root.PersistentFlags().BoolVar(&console, "console", console, "enable error/warn/info output to stdout")
+	root.PersistentFlags().BoolVar(&logFile, "log", logFile, "write error/warn/info output to the debug log")
+	root.PersistentFlags().BoolVar(&debug, "debug", debug, "enable debug-level output (requires --console or --log)")
+	root.PersistentFlags().BoolVar(&silent, "silent", silent, "suppress all non-error output")
+	return root
+}
+
 var rootCmd *cobra.Command
+
+// retainArchivedSpecStorySymbols keeps the inherited command implementation checked by
+// the compiler and linters while it remains deliberately absent from the local command tree.
+func retainArchivedSpecStorySymbols() {
+	_ = cloudURL
+	_ = cloudToken
+	_ = provenanceEnabled
+	_ = projectPathOverride
+	_ = gitOriginOverride
+	_ = loadedConfig
+	_ = createRunCommand
+	_ = runCmd
+	_ = createSyncCommand
+	_ = syncSpecificSessions
+	_ = preloadBulkSessionSizesIfNeeded
+	_ = syncProvider
+	_ = syncAllProviders
+	_ = syncSingleProvider
+	_ = syncCmd
+}
 
 // createRunCommand dynamically creates the run command with provider information
 func createRunCommand() *cobra.Command {
@@ -1555,158 +1569,33 @@ func main() {
 	// ApplyUserDataDirOverrides calls re-apply the same values harmlessly.
 	cmdpkg.ApplyUserDataDirOverrides(earlyUserDataDirs)
 
-	// NOW create the commands - after logging is configured
-	// Config-derived flag defaults shared by every session-saving command in
-	// pkg/cmd, resolved once so their flags can't drift from each other.
-	sessionFlagDefaults := cmdpkg.SessionFlagDefaults{
-		LocalTimeZone:      localTimeZone,
-		DebugDir:           debugDir,
-		NoTelemetryPrompts: noTelemetryPrompts,
-		NoRedactSecrets:    noRedactSecrets,
-	}
-	rootCmd = createRootCommand()
-	runCmd = createRunCommand()
-	watchCmd := cmdpkg.CreateWatchCommand(&cloudURL, sessionFlagDefaults)
-	resumeCmd := cmdpkg.CreateResumeCommand(&cloudURL, sessionFlagDefaults)
-	reindexCmd := cmdpkg.CreateReindexCommand()
-	searchCmd := cmdpkg.CreateSearchCommand(&cloudURL, sessionFlagDefaults)
-	skillsCmd := cmdpkg.CreateSkillsCommand(&cloudURL)
-	syncCmd = createSyncCommand()
-	listCmd := cmdpkg.CreateListCommand()
-	checkCmd := cmdpkg.CreateCheckCommand()
-	versionCmd := cmdpkg.CreateVersionCommand(version)
-	loginCmd := cmdpkg.CreateLoginCommand(&cloudURL)
-	logoutCmd := cmdpkg.CreateLogoutCommand(&cloudURL)
-
-	// Set version for the automatic version flag
-	rootCmd.Version = version
-
-	// Override the default version template to match our version command output
-	rootCmd.SetVersionTemplate("{{.Version}} (SpecStory)")
-
-	// Set our custom help command (for "specstory help")
-	helpCmd := cmdpkg.CreateHelpCommand(rootCmd)
-	rootCmd.SetHelpCommand(helpCmd)
-
-	// Add the subcommands
-	rootCmd.AddCommand(runCmd)
-	rootCmd.AddCommand(watchCmd)
-	rootCmd.AddCommand(resumeCmd)
-	rootCmd.AddCommand(reindexCmd)
-	rootCmd.AddCommand(searchCmd)
-	rootCmd.AddCommand(skillsCmd)
-	rootCmd.AddCommand(syncCmd)
-	rootCmd.AddCommand(listCmd)
-	rootCmd.AddCommand(versionCmd)
-	rootCmd.AddCommand(checkCmd)
-	rootCmd.AddCommand(loginCmd)
-	rootCmd.AddCommand(logoutCmd)
-
-	// Global flags available on all commands
-	// Use current variable values as defaults so config file values are preserved
-	rootCmd.PersistentFlags().BoolVar(&console, "console", console, "enable error/warn/info output to stdout")
-	rootCmd.PersistentFlags().BoolVar(&logFile, "log", logFile, "write error/warn/info output to ./.specstory/debug/debug.log")
-	rootCmd.PersistentFlags().BoolVar(&debug, "debug", debug, "enable debug-level output (requires --console or --log)")
-	rootCmd.PersistentFlags().BoolVar(&noAnalytics, "no-usage-analytics", noAnalytics, "disable usage analytics")
-	rootCmd.PersistentFlags().BoolVar(&silent, "silent", silent, "suppress all non-error output")
-	rootCmd.PersistentFlags().BoolVar(&noVersionCheck, "no-version-check", noVersionCheck, "skip checking for newer versions")
-	rootCmd.PersistentFlags().StringVar(&cloudToken, "cloud-token", "", "use a SpecStory Cloud refresh token for this session (bypasses login)")
-	_ = rootCmd.PersistentFlags().MarkHidden("cloud-token") // Hidden flag
-	rootCmd.PersistentFlags().StringVar(&projectPathOverride, "project-path", "", "override the project path used for session discovery and identity")
-	_ = rootCmd.PersistentFlags().MarkHidden("project-path") // Hidden flag
-	rootCmd.PersistentFlags().StringVar(&gitOriginOverride, "git-origin", "", "override the git remote origin URL used for project identity")
-	_ = rootCmd.PersistentFlags().MarkHidden("git-origin") // Hidden flag
-
-	// Command-specific flags
-	syncCmd.Flags().StringSliceP("session", "s", []string{}, "optional session IDs to sync (can be specified multiple times, provider-specific format)")
-	syncCmd.Flags().BoolVar(&printToStdout, "print", printToStdout, "output session markdown to stdout instead of saving (requires -s flag)")
-	syncCmd.Flags().StringVar(&outputDir, "output-dir", outputDir, "custom output directory for markdown files (default: ./.specstory/history)")
-	syncCmd.Flags().StringVar(&debugDir, "debug-dir", debugDir, "custom output directory for debug data (default: ./.specstory/debug)")
-	syncCmd.Flags().StringVar(&configDir, "config-dir", configDir, "custom directory for the project-level config.toml (default: ./.specstory/cli)")
-	syncCmd.Flags().BoolVar(&noCloudSync, "no-cloud-sync", noCloudSync, "disable cloud sync functionality")
-	syncCmd.Flags().BoolVar(&onlyCloudSync, "only-cloud-sync", onlyCloudSync, "skip local markdown file saves, only upload to cloud (requires authentication)")
-	syncCmd.Flags().BoolVar(&onlyStats, "only-stats", onlyStats, "only update statistics, skip local markdown files and cloud sync")
-	syncCmd.Flags().BoolVar(&noStats, "no-stats", noStats, "skip statistics entirely, do not read or write statistics.json")
-	syncCmd.Flags().StringVar(&cloudURL, "cloud-url", "", "override the default cloud API base URL")
-	_ = syncCmd.Flags().MarkHidden("cloud-url") // Hidden flag
-	syncCmd.Flags().Bool("debug-raw", false, "debug mode to output pretty-printed raw data files")
-	_ = syncCmd.Flags().MarkHidden("debug-raw") // Hidden flag
-	syncCmd.Flags().BoolVar(&localTimeZone, "local-time-zone", localTimeZone, "use local timezone for file name and content timestamps (when not present: UTC)")
-	syncCmd.Flags().StringVar(&telemetryEndpoint, "telemetry-endpoint", "", "Open Telemetry Protocol (OTLP) gRPC collector endpoint (default is off, e.g., localhost:4317)")
-	syncCmd.Flags().StringVar(&telemetryServiceName, "telemetry-service-name", "", "override the default service name for telemetry, if telemetry is enabled")
-	syncCmd.Flags().BoolVar(&noTelemetryPrompts, "no-telemetry-prompts", noTelemetryPrompts, "exclude prompt text from telemetry spans, if telemetry is enabled")
-	syncCmd.Flags().BoolVar(&noRedactSecrets, "no-redact-secrets", noRedactSecrets, "disable redaction of API keys and tokens from saved markdown history and cloud-synced session data")
-	cmdpkg.AddProvidersFlag(syncCmd)
-	cmdpkg.AddUserDataDirFlag(syncCmd)
-
-	runCmd.Flags().BoolVar(&provenanceEnabled, "provenance", false, "enable AI provenance tracking (correlate file changes to agent activity)")
-	_ = runCmd.Flags().MarkHidden("provenance") // Hidden flag
-	runCmd.Flags().StringP("command", "c", "", "custom agent execution command for the provider")
-	runCmd.Flags().String("resume", "", "resume a specific session by ID")
-	runCmd.Flags().StringVar(&outputDir, "output-dir", outputDir, "custom output directory for markdown files (default: ./.specstory/history)")
-	runCmd.Flags().StringVar(&debugDir, "debug-dir", debugDir, "custom output directory for debug data (default: ./.specstory/debug)")
-	runCmd.Flags().StringVar(&configDir, "config-dir", configDir, "custom directory for the project-level config.toml (default: ./.specstory/cli)")
-	runCmd.Flags().BoolVar(&noCloudSync, "no-cloud-sync", noCloudSync, "disable cloud sync functionality")
-	runCmd.Flags().BoolVar(&onlyCloudSync, "only-cloud-sync", onlyCloudSync, "skip local markdown file saves, only upload to cloud (requires authentication)")
-	runCmd.Flags().BoolVar(&noStats, "no-stats", noStats, "skip statistics entirely, do not read or write statistics.json")
-	runCmd.Flags().StringVar(&cloudURL, "cloud-url", "", "override the default cloud API base URL")
-	_ = runCmd.Flags().MarkHidden("cloud-url") // Hidden flag
-	runCmd.Flags().Bool("debug-raw", false, "debug mode to output pretty-printed raw data files")
-	_ = runCmd.Flags().MarkHidden("debug-raw") // Hidden flag
-	runCmd.Flags().BoolVar(&localTimeZone, "local-time-zone", localTimeZone, "use local timezone for file name and content timestamps (when not present: UTC)")
-	runCmd.Flags().StringVar(&telemetryEndpoint, "telemetry-endpoint", "", "Open Telemetry Protocol (OTLP) gRPC collector endpoint (default is off, e.g., localhost:4317)")
-	runCmd.Flags().StringVar(&telemetryServiceName, "telemetry-service-name", "", "override the default service name for telemetry, if telemetry is enabled")
-	runCmd.Flags().BoolVar(&noTelemetryPrompts, "no-telemetry-prompts", noTelemetryPrompts, "exclude prompt text from telemetry spans, if telemetry is enabled")
-	runCmd.Flags().BoolVar(&noRedactSecrets, "no-redact-secrets", noRedactSecrets, "disable redaction of API keys and tokens from saved markdown history and cloud-synced session data")
-
-	// Initialize analytics with the full CLI command (unless disabled)
-	slog.Debug("Analytics initialization check", "noAnalytics", noAnalytics, "flag_should_disable", noAnalytics)
-	if !noAnalytics {
-		slog.Debug("Initializing analytics")
-		fullCommand := strings.Join(os.Args, " ")
-		if err := analytics.Init(fullCommand, version); err != nil {
-			// Log error but don't fail - analytics should not break the app
-			slog.Warn("Failed to initialize analytics", "error", err)
-		}
-		defer func() { _ = analytics.Close() }() // Analytics errors shouldn't break the app
-	} else {
-		slog.Debug("Analytics disabled by --no-usage-analytics flag")
-	}
+	// Construct only the local Codex Sessions command surface. Inherited commands remain
+	// compiled and tested, but are deliberately unreachable from the executable.
+	rootCmd = createLocalCommandTree()
 
 	// Log config load error after logging is set up
 	if cfgErr != nil {
 		slog.Warn("Failed to load config file, using defaults", "error", cfgErr)
 	}
 
-	// Initialize telemetry (after logging is configured)
-	if err := telemetry.Init(context.Background(), telemetry.Options{
-		ServiceName: cfg.GetTelemetryServiceName(),
-		Endpoint:    cfg.GetTelemetryEndpoint(),
-		Enabled:     cfg.IsTelemetryEnabled(),
-	}); err != nil {
-		slog.Warn("Failed to initialize telemetry", "error", err)
-	}
-	// Shutdown flushes pending spans/metrics before closing providers.
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := telemetry.Shutdown(shutdownCtx); err != nil {
-			slog.Warn("Failed to shutdown telemetry", "error", err)
-		}
-	}()
-
-	// Check for updates (blocking)
-	utils.CheckForUpdates(version, noVersionCheck, silent)
-
 	// Ensure proper cleanup and logging on exit
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("=== SpecStory PANIC ===", "panic", r)
-			// Still try to wait for cloud sync even on panic
-			_ = cloud.Shutdown(cloud.CloudSyncTimeout)
 			log.CloseLogger()
 			panic(r) // Re-panic after logging
 		}
+		if console || logFile {
+			slog.Info("=== SpecStory Exiting ===", "code", 0, "status", "normal termination")
+		}
+		log.CloseLogger()
+		if !archivedCloudShutdownEnabled {
+			return
+		}
+		retainArchivedSpecStorySymbols()
+
+		// Archived SpecStory cloud shutdown/reporting implementation. This remains buildable for
+		// upstream reference but the local-only executable never enables it.
 		// Wait for cloud sync operations to complete before exiting
 		cloudStats := cloud.Shutdown(cloud.CloudSyncTimeout)
 
@@ -1789,42 +1678,28 @@ func main() {
 	}()
 
 	if err := fang.Execute(context.Background(), rootCmd, fang.WithVersion(version)); err != nil {
-		// Check if we're running the check command by looking at the executed command
-		executedCmd, _, _ := rootCmd.Find(os.Args[1:])
-		if executedCmd == checkCmd {
-			if console || logFile {
-				slog.Error("=== SpecStory Exiting ===", "code", 2, "status", "agent execution failure")
-				slog.Error("Error", "error", err)
-			}
-			// For check command, the error details are handled by checkSingleProvider/checkAllProviders
-			// So we just exit silently here
-			_ = cloud.Shutdown(cloud.CloudSyncTimeout)
-			os.Exit(2)
-		} else {
-			if console || logFile {
-				slog.Error("=== SpecStory Exiting ===", "code", 1, "status", "error")
-				slog.Error("Error", "error", err)
-			}
-			fmt.Fprintln(os.Stderr) // Visual separation makes error output more noticeable
-
-			// Only show usage for actual command/flag errors from Cobra
-			// These are errors like "unknown command", "unknown flag", "invalid argument", etc.
-			// For all other errors (authentication, network, file system, etc.), we should NOT show usage
-			errMsg := err.Error()
-			isCommandError := strings.Contains(errMsg, "unknown command") ||
-				strings.Contains(errMsg, "unknown flag") ||
-				strings.Contains(errMsg, "invalid argument") ||
-				strings.Contains(errMsg, "required flag") ||
-				strings.Contains(errMsg, "accepts") || // e.g., "accepts 1 arg(s), received 2"
-				strings.Contains(errMsg, "no such flag") ||
-				strings.Contains(errMsg, "flag needs an argument")
-
-			if isCommandError {
-				_ = rootCmd.Usage() // Ignore error; we're exiting anyway
-				fmt.Println()       // Add visual separation after usage for better CLI readability
-			}
-			_ = cloud.Shutdown(cloud.CloudSyncTimeout)
-			os.Exit(1)
+		if console || logFile {
+			slog.Error("=== SpecStory Exiting ===", "code", 1, "status", "error")
+			slog.Error("Error", "error", err)
 		}
+		fmt.Fprintln(os.Stderr) // Visual separation makes error output more noticeable
+
+		// Only show usage for actual command/flag errors from Cobra
+		// These are errors like "unknown command", "unknown flag", "invalid argument", etc.
+		// For all other errors (authentication, network, file system, etc.), we should NOT show usage
+		errMsg := err.Error()
+		isCommandError := strings.Contains(errMsg, "unknown command") ||
+			strings.Contains(errMsg, "unknown flag") ||
+			strings.Contains(errMsg, "invalid argument") ||
+			strings.Contains(errMsg, "required flag") ||
+			strings.Contains(errMsg, "accepts") || // e.g., "accepts 1 arg(s), received 2"
+			strings.Contains(errMsg, "no such flag") ||
+			strings.Contains(errMsg, "flag needs an argument")
+
+		if isCommandError {
+			_ = rootCmd.Usage() // Ignore error; we're exiting anyway
+			fmt.Println()       // Add visual separation after usage for better CLI readability
+		}
+		os.Exit(1)
 	}
 }

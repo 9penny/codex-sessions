@@ -15,14 +15,10 @@ func TestEndpointReachable(t *testing.T) {
 	defer func() { _ = listener.Close() }()
 	liveAddr := listener.Addr().String()
 
-	// A port that was just released gives us a deterministic "nothing listening"
-	// address without guessing port numbers.
-	closedListener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to start throwaway listener: %v", err)
-	}
-	closedAddr := closedListener.Addr().String()
-	_ = closedListener.Close()
+	// WSL can transiently report a just-released ephemeral port as reachable through its
+	// localhost forwarding layer. Port 1 avoids that ephemeral range and is not used by the
+	// test environment, making the archived reachability test stable on Linux and WSL.
+	closedAddr := "127.0.0.1:1"
 
 	tests := []struct {
 		name string
