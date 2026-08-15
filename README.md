@@ -3,7 +3,7 @@
 > [!IMPORTANT]
 > This repository is an early, personal-first fork of SpecStory focused exclusively on safe local Codex CLI session browsing over Linux, WSL, and SSH. The application is not ready for daily use yet. Until the `v0.1` safety milestone is complete, the inherited index may persist unredacted session content.
 
-The confirmed scope and milestone plan are maintained in the separate [codex-session-management](https://github.com/9penny/codex-session-management) planning repository. The intended command name is `csessions`; inherited SpecStory names and multi-agent/cloud features will be removed or disabled incrementally.
+The confirmed scope and milestone plan are maintained in the separate [codex-session-management](https://github.com/9penny/codex-session-management) planning repository. The ordered development slices and release gates are recorded in the [v0.1 implementation plan](./specstory-cli/docs/V0.1-IMPLEMENTATION-PLAN.md). The intended command name is `csessions`; inherited SpecStory names and multi-agent/cloud features will be removed or disabled incrementally.
 
 ## Upstream
 
