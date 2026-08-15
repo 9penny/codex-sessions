@@ -410,7 +410,7 @@ func (p *Provider) ExecAgentAndWatch(projectPath string, customCommand string, r
 
 	// Execute Codex CLI - this blocks until Codex exits
 	slog.Info("Executing Codex CLI", "command", customCommand, "resumeSessionID", resumeSessionID)
-	err := ExecuteCodex(customCommand, resumeSessionID)
+	err := executeCodex(customCommand, resumeSessionID, projectPath)
 
 	// Stop the watcher goroutine and wait for it to finish before returning
 	slog.Info("Codex CLI has exited, stopping watcher")

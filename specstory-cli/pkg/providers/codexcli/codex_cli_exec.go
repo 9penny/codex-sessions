@@ -224,6 +224,12 @@ func classifyCheckError(err error) string {
 // If resumeSessionID is provided, runs "codex resume <sessionId>" to continue that session.
 // Otherwise, starts a new codex session.
 func ExecuteCodex(customCommand string, resumeSessionID string) error {
+	return executeCodex(customCommand, resumeSessionID, "")
+}
+
+// executeCodex runs Codex in projectPath when provided. exec.Cmd.Dir is required here:
+// passing the path only to the session watcher does not change the child process directory.
+func executeCodex(customCommand string, resumeSessionID string, projectPath string) error {
 	var cmd *exec.Cmd
 
 	if resumeSessionID != "" {
@@ -252,6 +258,9 @@ func ExecuteCodex(customCommand string, resumeSessionID string) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	if projectPath != "" {
+		cmd.Dir = projectPath
+	}
 
 	// Run the command and wait for it to complete
 	slog.Info("ExecuteCodex: Executing Codex CLI (blocking until exit)")
