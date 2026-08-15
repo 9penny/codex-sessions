@@ -84,7 +84,11 @@ func selectResumeViaTUI(registry *factory.Registry, store *sessionindex.Store, p
 	// (--session) is itself something to resume, so skip the bail even on an empty index.
 	if pinned == nil {
 		if total, _ := store.Count(); total == 0 {
-			fprintln(os.Stderr, "\nNo agent sessions indexed yet. Run an agent here, then try again (or `specstory reindex`).")
+			reindexCommand := "specstory reindex"
+			if localOnly {
+				reindexCommand = "csessions reindex"
+			}
+			fprintf(os.Stderr, "\nNo agent sessions indexed yet. Run an agent here, then try again (or `%s`).\n", reindexCommand)
 			return nil, nil
 		}
 	}
@@ -126,13 +130,19 @@ func selectResumeViaTUI(registry *factory.Registry, store *sessionindex.Store, p
 	}
 
 	viewMode, lastAgent := "dense", ""
-	if cfg, _ := config.Load(nil); cfg != nil {
+	var cfg *config.Config
+	if localOnly {
+		cfg, _ = config.LoadCodexSessions()
+	} else {
+		cfg, _ = config.Load(nil)
+	}
+	if cfg != nil {
 		viewMode = cfg.GetResumeViewMode()
 		lastAgent = cfg.GetResumeLastAgent()
 	}
 
 	model := newSessionTUI(store, registry, projectID, projectName, sessions, agents, installed, sessionTUIOpts{
-		title:         "SpecStory Resume",
+		title:         localTitle(localOnly, "Resume"),
 		presetTo:      presetTo,
 		lastAgent:     lastAgent,
 		viewMode:      viewMode,
@@ -164,8 +174,14 @@ func selectResumeViaTUI(registry *factory.Registry, store *sessionindex.Store, p
 		return nil, fmt.Errorf("unknown target agent %q: %w", rm.result.targetID, err)
 	}
 
-	if err := config.SaveResumePrefs(rm.viewMode, rm.result.targetID); err != nil {
-		slog.Debug("resume: could not save prefs", "error", err)
+	var saveErr error
+	if localOnly {
+		saveErr = config.SaveCodexSessionsResumePrefs(rm.viewMode, rm.result.targetID)
+	} else {
+		saveErr = config.SaveResumePrefs(rm.viewMode, rm.result.targetID)
+	}
+	if saveErr != nil {
+		slog.Debug("resume: could not save prefs", "error", saveErr)
 	}
 
 	fromCloud, fromCwd := resumeSourceForSession(store, rm.result.session)
@@ -179,6 +195,13 @@ func selectResumeViaTUI(registry *factory.Registry, store *sessionindex.Store, p
 		fromCloud: fromCloud,
 		projectID: rm.result.session.ProjectID,
 	}, nil
+}
+
+func localTitle(localOnly bool, action string) string {
+	if localOnly {
+		return "Codex Sessions " + action
+	}
+	return "SpecStory " + action
 }
 
 // agentIDByNameFromRegistry builds the agent display-name → provider-id map that cloud row

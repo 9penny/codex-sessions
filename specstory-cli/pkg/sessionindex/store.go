@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/specstoryai/getspecstory/specstory-cli/pkg/config"
 	"github.com/specstoryai/getspecstory/specstory-cli/pkg/spi"
 
 	sqlite "modernc.org/sqlite" // SQLite driver (pure Go), same as pkg/provenance; named for *sqlite.Error
@@ -105,13 +106,13 @@ type Store struct {
 	db *sql.DB
 }
 
-// DefaultPath returns ~/.specstory/sessions.db.
+// DefaultPath returns the Codex Sessions database path under XDG_DATA_HOME.
 func DefaultPath() (string, error) {
-	home, err := os.UserHomeDir()
+	paths, err := config.ResolveCodexSessionsPaths()
 	if err != nil {
-		return "", fmt.Errorf("failed to resolve home directory: %w", err)
+		return "", err
 	}
-	return filepath.Join(home, ".specstory", "sessions.db"), nil
+	return paths.DatabaseFile, nil
 }
 
 // Open opens (or creates) sessions.db for writing — a single serialized connection,

@@ -191,13 +191,23 @@ Resuming SpecStory Cloud sessions (from your other machines) requires an active 
 			return launchResume(plan, cwd, launchOpts)
 		},
 	}
+	if localOnly {
+		resumeCmd.Short = "Resume a local Codex CLI session"
+		resumeCmd.Long = `Resume a local Codex CLI session from the derived index.
+
+'resume' opens the Codex Sessions picker. The native Codex JSONL remains authoritative, and the Codex process starts in the session's recorded project directory.`
+	}
 
 	if !localOnly {
 		registerSessionProcessingFlags(resumeCmd, cloudURL, defaults)
 	}
 	// --session is registered on `resume` only — deliberately NOT in the shared
 	// flag registration, so `search` is untouched.
-	resumeCmd.Flags().String("session", "", "resume a specific session by URI or UUID (specstory://…, cloud permalink, or session UUID)")
+	sessionHelp := "resume a specific session by URI or UUID (specstory://…, cloud permalink, or session UUID)"
+	if localOnly {
+		sessionHelp = "resume a specific local Codex session by UUID"
+	}
+	resumeCmd.Flags().String("session", "", sessionHelp)
 	return resumeCmd
 }
 

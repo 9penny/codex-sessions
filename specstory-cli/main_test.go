@@ -15,6 +15,12 @@ import (
 
 func TestLocalCommandTreeExcludesOutboundSurfaces(t *testing.T) {
 	root := createLocalCommandTree()
+	if root.Use != "csessions [command]" {
+		t.Errorf("root use = %q, want csessions [command]", root.Use)
+	}
+	if !strings.Contains(root.Long, "Codex Sessions") || strings.Contains(root.Long, "SpecStory") {
+		t.Errorf("root description does not use Codex Sessions identity: %q", root.Long)
+	}
 
 	var commands []string
 	for _, command := range root.Commands() {
@@ -62,18 +68,34 @@ func TestLocalCommandsMakeNoNetworkConnections(t *testing.T) {
 	}
 
 	tempDir := t.TempDir()
-	binary := filepath.Join(tempDir, "specstory")
+	binary := filepath.Join(tempDir, "csessions")
 	build := exec.Command(goBinary, "build", "-o", binary, ".")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building subprocess: %v\n%s", err, output)
 	}
 
-	for _, args := range [][]string{{"help"}, {"version"}, {"reindex"}} {
-		name := strings.Join(args, "_")
+	commands := []struct {
+		args         []string
+		wantIdentity bool
+	}{
+		{args: nil, wantIdentity: true},
+		{args: []string{"help"}, wantIdentity: true},
+		{args: []string{"help", "resume"}, wantIdentity: true},
+		{args: []string{"help", "search"}, wantIdentity: true},
+		{args: []string{"help", "reindex"}, wantIdentity: true},
+		{args: []string{"version"}, wantIdentity: true},
+		{args: []string{"--version"}, wantIdentity: true},
+		{args: []string{"reindex"}},
+	}
+	for _, tc := range commands {
+		name := strings.Join(tc.args, "_")
+		if name == "" {
+			name = "startup"
+		}
 		t.Run(name, func(t *testing.T) {
 			tracePath := filepath.Join(tempDir, name+".trace")
 			commandArgs := []string{"-f", "-qq", "-e", "trace=connect", "-e", "signal=none", "-o", tracePath, binary}
-			commandArgs = append(commandArgs, args...)
+			commandArgs = append(commandArgs, tc.args...)
 			command := exec.Command(strace, commandArgs...)
 			command.Env = append(os.Environ(),
 				"HOME="+tempDir,
@@ -81,17 +103,35 @@ func TestLocalCommandsMakeNoNetworkConnections(t *testing.T) {
 				"XDG_DATA_HOME="+filepath.Join(tempDir, "data"),
 				"XDG_CACHE_HOME="+filepath.Join(tempDir, "cache"),
 			)
-			if output, err := command.CombinedOutput(); err != nil {
-				t.Fatalf("running %v: %v\n%s", args, err, output)
+			output, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("running %v: %v\n%s", tc.args, err, output)
+			}
+			if tc.wantIdentity {
+				text := string(output)
+				hasCurrentIdentity := strings.Contains(text, "Codex Sessions") || strings.Contains(text, "csessions")
+				if !hasCurrentIdentity || strings.Contains(text, "SpecStory") {
+					t.Errorf("%v output has stale product identity:\n%s", tc.args, text)
+				}
 			}
 			trace, err := os.ReadFile(tracePath)
 			if err != nil {
 				t.Fatalf("reading syscall trace: %v", err)
 			}
-			if len(strings.TrimSpace(string(trace))) != 0 {
-				t.Fatalf("%v attempted a network connection:\n%s", args, trace)
+			traceText := string(trace)
+			if strings.Contains(traceText, "connect(") || strings.Contains(traceText, "connect resumed>") {
+				t.Fatalf("%v attempted a network connection:\n%s", tc.args, trace)
 			}
 		})
+	}
+
+	legacyDir := filepath.Join(tempDir, ".specstory")
+	if _, err := os.Stat(legacyDir); !os.IsNotExist(err) {
+		t.Fatalf("local commands created legacy storage %q", legacyDir)
+	}
+	database := filepath.Join(tempDir, "data", "csessions", "sessions.db")
+	if _, err := os.Stat(database); err != nil {
+		t.Fatalf("reindex did not create XDG database %q: %v", database, err)
 	}
 }
 
