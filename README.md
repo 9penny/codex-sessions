@@ -1,3 +1,15 @@
+# Codex Sessions
+
+> [!IMPORTANT]
+> This repository is an early, personal-first fork of SpecStory focused exclusively on safe local Codex CLI session browsing over Linux, WSL, and SSH. The application is not ready for daily use yet. Until the `v0.1` safety milestone is complete, the inherited index may persist unredacted session content.
+
+The confirmed scope and milestone plan are maintained in the separate [codex-session-management](https://github.com/9penny/codex-session-management) planning repository. The intended command name is `csessions`; inherited SpecStory names and multi-agent/cloud features will be removed or disabled incrementally.
+
+## Upstream
+
+Codex Sessions is forked from [SpecStory](https://github.com/specstoryai/getspecstory) and retains its Apache-2.0 license and history. Upstream documentation follows below for reference during the bootstrap phase.
+
+---
 
 <img width="1649" height="158" alt="Group 6 (1)" src="https://github.com/user-attachments/assets/93f0210f-c3ce-4035-91df-ec597e00a3ce" />
 
