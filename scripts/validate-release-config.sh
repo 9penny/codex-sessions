@@ -5,6 +5,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 goreleaser="$repo_root/.goreleaser.yml"
 workflow="$repo_root/.github/workflows/release.yml"
+ci="$repo_root/.github/workflows/ci.yml"
 installer="$repo_root/install.sh"
 
 require_fixed() {
@@ -36,6 +37,10 @@ require_fixed "$workflow" "      - 'v*'"
 require_fixed "$workflow" 'args: release --clean'
 require_fixed "$workflow" 'GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}'
 reject_regex "$workflow" 'specstory-cli/v|POSTHOG|SLACK|HOMEBREW|specstoryai|curl[[:space:]]+-X[[:space:]]+POST'
+
+require_fixed "$ci" 'args: release --snapshot --clean'
+require_fixed "$ci" 'DOWNLOAD_BASE_URL: file://${{ github.workspace }}/dist'
+reject_regex "$ci" 'windows-latest|GOOS=windows|GOOS=darwin'
 
 require_fixed "$installer" 'REPO="9penny/codex-sessions"'
 require_fixed "$installer" 'BINARY_NAME="csessions"'
