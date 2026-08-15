@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/specstoryai/getspecstory/specstory-cli/pkg/spi"
 )
 
 func newSession(agent, id, projectID, name, body string) Session {
@@ -68,6 +70,43 @@ func TestUpsertAndListByProject(t *testing.T) {
 		}
 		if sess.UserTurns != 3 || sess.TotalTurns != 9 {
 			t.Errorf("turn counts not round-tripped: user=%d total=%d", sess.UserTurns, sess.TotalTurns)
+		}
+	}
+}
+
+func TestDefaultQueriesHideBackgroundSessions(t *testing.T) {
+	s := openTemp(t)
+
+	interactive := newSession("codex", "interactive", "proj-a", "Visible", "visible marker")
+	interactive.Kind = spi.SessionKindInteractive
+	subagent := newSession("codex", "subagent", "proj-a", "Hidden subagent", "subagent marker")
+	subagent.Kind = spi.SessionKindSubagent
+	execSession := newSession("codex", "exec", "proj-a", "Hidden exec", "exec marker")
+	execSession.Kind = spi.SessionKindExec
+	unknown := newSession("codex", "unknown", "proj-a", "Hidden unknown", "unknown marker")
+	unknown.Kind = spi.SessionKindUnknown
+
+	for _, sess := range []Session{interactive, subagent, execSession, unknown} {
+		mustUpsert(t, s, sess)
+	}
+
+	if n, err := s.Count(); err != nil || n != 1 {
+		t.Fatalf("Count() = %d, %v; want only one interactive session", n, err)
+	}
+	listed, err := s.ListByProject("proj-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].SessionID != "interactive" {
+		t.Fatalf("ListByProject() = %+v; want only interactive", listed)
+	}
+	for _, query := range []string{"subagent", "exec", "unknown"} {
+		hits, err := s.Search(query, "")
+		if err != nil {
+			t.Fatalf("Search(%q): %v", query, err)
+		}
+		if len(hits) != 0 {
+			t.Errorf("Search(%q) returned hidden sessions: %+v", query, hits)
 		}
 	}
 }

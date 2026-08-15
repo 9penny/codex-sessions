@@ -90,6 +90,58 @@ func TestLoadCodexSessionMeta(t *testing.T) {
 	}
 }
 
+func TestScanCodexSessionHeaderClassifiesSourceKind(t *testing.T) {
+	tests := []struct {
+		name       string
+		metaFields string
+		wantKind   string
+	}{
+		{
+			name:       "interactive CLI session",
+			metaFields: `"source":"cli","thread_source":"user","originator":"codex-tui"`,
+			wantKind:   "interactive",
+		},
+		{
+			name:       "exec session",
+			metaFields: `"source":"exec","thread_source":"user","originator":"codex_exec"`,
+			wantKind:   "exec",
+		},
+		{
+			name:       "subagent session",
+			metaFields: `"source":{"subagent":{"thread_id":"synthetic"}},"thread_source":"subagent","originator":"codex-tui"`,
+			wantKind:   "subagent",
+		},
+		{
+			name:       "unrecognized source is explicit",
+			metaFields: `"source":"future-source","originator":"future-originator"`,
+			wantKind:   "unknown",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "session.jsonl")
+			content := `{"type":"session_meta","timestamp":"2026-08-15T00:00:00Z","payload":{"id":"synthetic-session","timestamp":"2026-08-15T00:00:00Z","cwd":"/tmp/project",` + tt.metaFields + `}}
+{"type":"event_msg","timestamp":"2026-08-15T00:00:01Z","payload":{"type":"user_message","message":"Synthetic prompt"}}
+`
+			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+				t.Fatalf("write fixture: %v", err)
+			}
+
+			header, err := scanCodexSessionHeader(path)
+			if err != nil {
+				t.Fatalf("scanCodexSessionHeader() error = %v", err)
+			}
+			if header == nil {
+				t.Fatal("scanCodexSessionHeader() returned nil header")
+			}
+			if string(header.kind) != tt.wantKind {
+				t.Errorf("kind = %q, want %q", header.kind, tt.wantKind)
+			}
+		})
+	}
+}
+
 // TestProcessSessionRecords was removed because processSessionRecords is not exported
 // The logic is tested indirectly through readSessionRawData and processSessionToAgentChat
 

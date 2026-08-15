@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/specstoryai/getspecstory/specstory-cli/pkg/spi"
+
 	sqlite "modernc.org/sqlite" // SQLite driver (pure Go), same as pkg/provenance; named for *sqlite.Error
 )
 
@@ -61,6 +63,7 @@ type Session struct {
 	Name         string
 	NativePath   string // absolute path the provider opens to read this session
 	OriginCwd    string // working directory the session was launched from
+	Kind         spi.SessionKind
 	Size         int64  // native file size, bytes — part of the freshness fingerprint
 	Mtime        int64  // native file mtime, epoch ms — part of the freshness fingerprint
 	IndexVersion int    // reindex logic version that wrote this row — part of the fingerprint
@@ -198,7 +201,7 @@ func (s *Store) Close() error {
 // sessionColumns is the canonical sessions column list, shared by every SELECT so the
 // scan order in scanSessions stays in lockstep with it.
 const sessionColumns = `project_id, project_name, agent, session_id, created_at, updated_at,
-	user_turns, total_turns, slug, name, native_path, origin_cwd, size, mtime, index_version, indexed_at`
+	user_turns, total_turns, slug, name, native_path, origin_cwd, kind, size, mtime, index_version, indexed_at`
 
 // sessionInsertColumns is sessionColumns plus fts_rowid, the internal link to the session's
 // FTS row. fts_rowid is write-only — set on insert, read only by SessionBody's join — so it is
@@ -221,6 +224,7 @@ func (s *Store) ensureSchema() error {
 		name         TEXT,
 		native_path  TEXT,
 		origin_cwd   TEXT,
+		kind         TEXT NOT NULL DEFAULT '',
 		size          INTEGER,
 		mtime         INTEGER,
 		index_version INTEGER,
@@ -265,6 +269,9 @@ func (s *Store) ensureSchema() error {
 	// column already exists. Constant DEFAULT keeps existing rows visible (0). See
 	// docs/SESSIONS-DB.md.
 	s.runMigration(`ALTER TABLE sessions ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0`)
+	// Session source classification supports hiding background Codex work by default. An empty
+	// value keeps legacy/non-Codex rows visible; a reindex version bump classifies Codex rows.
+	s.runMigration(`ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT ''`)
 	// Drop the old single-column project index now superseded by the composite
 	// idx_sessions_project_recent (project_id is its left prefix). Idempotent; a no-op
 	// on fresh databases that never had it.
@@ -358,7 +365,7 @@ func upsertOne(st sessionUpsertStmts, sess Session) error {
 	if _, err := st.insSession.Exec(
 		sess.ProjectID, sess.ProjectName, sess.Agent, sess.SessionID, sess.CreatedAt, sess.UpdatedAt,
 		sess.UserTurns, sess.TotalTurns, sess.Slug, sess.Name, sess.NativePath, sess.OriginCwd,
-		sess.Size, sess.Mtime, sess.IndexVersion, sess.IndexedAt, ftsRowid); err != nil {
+		sess.Kind, sess.Size, sess.Mtime, sess.IndexVersion, sess.IndexedAt, ftsRowid); err != nil {
 		return fmt.Errorf("upsert session row: %w", err)
 	}
 	return nil
@@ -426,7 +433,7 @@ func prepareUpsert(tx *sql.Tx) (sessionUpsertStmts, func(), error) {
 	}
 
 	insSession, err := prep("session upsert", `INSERT OR REPLACE INTO sessions (`+sessionInsertColumns+`)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return sessionUpsertStmts{}, func() {}, err
 	}
@@ -588,7 +595,7 @@ func (s *Store) Exists(agent, sessionID string) (bool, error) {
 // Count returns the number of indexed sessions.
 func (s *Store) Count() (int, error) {
 	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE deleted = 0`).Scan(&n); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE deleted = 0 AND (kind = '' OR kind = 'interactive')`).Scan(&n); err != nil {
 		return 0, err
 	}
 	return n, nil
@@ -598,14 +605,14 @@ func (s *Store) Count() (int, error) {
 // (excluding the unknownID bucket).
 func (s *Store) ProjectCount(unknownID string) (int, error) {
 	var n int
-	err := s.db.QueryRow(`SELECT COUNT(DISTINCT project_id) FROM sessions WHERE project_id != ? AND deleted = 0`, unknownID).Scan(&n)
+	err := s.db.QueryRow(`SELECT COUNT(DISTINCT project_id) FROM sessions WHERE project_id != ? AND deleted = 0 AND (kind = '' OR kind = 'interactive')`, unknownID).Scan(&n)
 	return n, err
 }
 
 // UnattributedCount returns the number of sessions in the unknownID bucket.
 func (s *Store) UnattributedCount(unknownID string) (int, error) {
 	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE project_id = ? AND deleted = 0`, unknownID).Scan(&n)
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE project_id = ? AND deleted = 0 AND (kind = '' OR kind = 'interactive')`, unknownID).Scan(&n)
 	return n, err
 }
 
@@ -638,7 +645,7 @@ func (s *Store) KnownCwds() ([]string, error) {
 // cloud fetch when a cloud-badged session is actually present on this machine.
 func (s *Store) GetSession(agent, sessionID string) (Session, bool, error) {
 	rows, err := s.db.Query(`SELECT `+sessionColumns+`
-		FROM sessions WHERE agent = ? AND session_id = ? AND deleted = 0`, agent, sessionID)
+		FROM sessions WHERE agent = ? AND session_id = ? AND deleted = 0 AND (kind = '' OR kind = 'interactive')`, agent, sessionID)
 	if err != nil {
 		return Session{}, false, err
 	}
@@ -661,7 +668,7 @@ func (s *Store) GetSession(agent, sessionID string) (Session, bool, error) {
 // agents sharing an id is near-impossible — but if it happens, the most recent row wins.
 func (s *Store) GetSessionByID(sessionID string) (Session, bool, error) {
 	rows, err := s.db.Query(`SELECT `+sessionColumns+`
-		FROM sessions WHERE session_id = ? AND deleted = 0
+		FROM sessions WHERE session_id = ? AND deleted = 0 AND (kind = '' OR kind = 'interactive')
 		ORDER BY updated_at DESC, created_at DESC LIMIT 1`, sessionID)
 	if err != nil {
 		return Session{}, false, err
@@ -682,7 +689,7 @@ func (s *Store) GetSessionByID(sessionID string) (Session, bool, error) {
 // populated (it lives only in the FTS index). Used by the `specstory resume` picker.
 func (s *Store) ListByProject(projectID string) ([]Session, error) {
 	rows, err := s.db.Query(`SELECT `+sessionColumns+`
-		FROM sessions WHERE project_id = ? AND deleted = 0 ORDER BY updated_at DESC, created_at DESC`, projectID)
+		FROM sessions WHERE project_id = ? AND deleted = 0 AND (kind = '' OR kind = 'interactive') ORDER BY updated_at DESC, created_at DESC`, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -710,7 +717,7 @@ type ProjectSummary struct {
 // the caller decides how to present it.
 func (s *Store) ListProjects() ([]ProjectSummary, error) {
 	rows, err := s.db.Query(`SELECT project_id, project_name, agent, COUNT(*), MAX(updated_at)
-		FROM sessions WHERE deleted = 0 GROUP BY project_id, agent`)
+		FROM sessions WHERE deleted = 0 AND (kind = '' OR kind = 'interactive') GROUP BY project_id, agent`)
 	if err != nil {
 		return nil, err
 	}
@@ -765,7 +772,7 @@ type ProjectSessionKey struct {
 // using ListProjects (a single grouped query is cheaper than enumerating then rolling up client-side).
 func (s *Store) ListAllSessionKeysByProject() (map[string][]ProjectSessionKey, error) {
 	rows, err := s.db.Query(`SELECT project_id, agent, session_id
-		FROM sessions WHERE deleted = 0`)
+		FROM sessions WHERE deleted = 0 AND (kind = '' OR kind = 'interactive')`)
 	if err != nil {
 		return nil, err
 	}
@@ -821,7 +828,7 @@ func (s *Store) SearchContext(ctx context.Context, query, projectID string) ([]S
 	q := `SELECT ` + prefixed("s", sessionColumns) + `
 		FROM sessions_fts
 		JOIN sessions s ON s.agent = sessions_fts.agent AND s.session_id = sessions_fts.session_id
-		WHERE sessions_fts MATCH ? AND s.deleted = 0`
+		WHERE sessions_fts MATCH ? AND s.deleted = 0 AND (s.kind = '' OR s.kind = 'interactive')`
 	args := []any{query}
 	if projectID != "" {
 		q += ` AND s.project_id = ?`
@@ -913,7 +920,7 @@ func scanSessions(rows *sql.Rows) ([]Session, error) {
 		if err := rows.Scan(
 			&s.ProjectID, &s.ProjectName, &s.Agent, &s.SessionID, &s.CreatedAt, &s.UpdatedAt,
 			&s.UserTurns, &s.TotalTurns, &s.Slug, &s.Name, &s.NativePath, &s.OriginCwd,
-			&s.Size, &s.Mtime, &s.IndexVersion, &s.IndexedAt,
+			&s.Kind, &s.Size, &s.Mtime, &s.IndexVersion, &s.IndexedAt,
 		); err != nil {
 			return nil, err
 		}

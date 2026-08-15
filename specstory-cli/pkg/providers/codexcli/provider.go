@@ -26,9 +26,12 @@ const (
 
 // codexSessionMetaPayload captures the payload embedded in the Codex CLI session metadata record.
 type codexSessionMetaPayload struct {
-	ID        string `json:"id"`
-	Timestamp string `json:"timestamp"`
-	CWD       string `json:"cwd"`
+	ID           string          `json:"id"`
+	Timestamp    string          `json:"timestamp"`
+	CWD          string          `json:"cwd"`
+	Source       json.RawMessage `json:"source"`
+	ThreadSource string          `json:"thread_source"`
+	Originator   string          `json:"originator"`
 }
 
 // codexSessionMeta represents the metadata stored as the first line of a Codex CLI session JSONL file.
@@ -1025,6 +1028,32 @@ type codexSessionHeader struct {
 	cwd              string
 	createdAt        string
 	firstUserMessage string
+	kind             spi.SessionKind
+}
+
+func codexSessionKind(meta codexSessionMetaPayload) spi.SessionKind {
+	var sourceName string
+	if len(meta.Source) > 0 {
+		if err := json.Unmarshal(meta.Source, &sourceName); err != nil {
+			var sourceObject map[string]json.RawMessage
+			if err := json.Unmarshal(meta.Source, &sourceObject); err == nil {
+				if _, ok := sourceObject["subagent"]; ok {
+					return spi.SessionKindSubagent
+				}
+			}
+		}
+	}
+
+	if meta.ThreadSource == "subagent" {
+		return spi.SessionKindSubagent
+	}
+	if sourceName == "exec" || meta.Originator == "codex_exec" {
+		return spi.SessionKindExec
+	}
+	if sourceName == "cli" && (meta.ThreadSource == "" || meta.ThreadSource == "user") {
+		return spi.SessionKindInteractive
+	}
+	return spi.SessionKindUnknown
 }
 
 // userMessageMarker is the cheap substring screen for a Codex user_message record. Every real
@@ -1085,6 +1114,7 @@ func scanCodexSessionHeader(sessionPath string) (*codexSessionHeader, error) {
 				h.sessionID = strings.TrimSpace(meta.Payload.ID)
 				h.cwd = meta.Payload.CWD
 				h.createdAt = meta.Timestamp
+				h.kind = codexSessionKind(meta.Payload)
 			}
 		} else if strings.Contains(line, userMessageMarker) {
 			// Cheap screen passed: only now pay for a full parse. The big context records before
@@ -1172,6 +1202,7 @@ func (p *Provider) ListAllAgentChatSessionsProgress(r *spi.ScanReporter) ([]spi.
 			Name:       spi.GenerateReadableName(h.firstUserMessage),
 			NativePath: path,
 			OriginCwd:  h.cwd,
+			Kind:       h.kind,
 		}, nil
 	})
 }
