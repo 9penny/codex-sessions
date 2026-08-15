@@ -24,6 +24,12 @@ noise or unredacted content.
 The index version is part of the freshness fingerprint. A parser, redaction, classification, or
 search representation change bumps that version so legacy rows are safely replaced.
 
+Optional AI titles, summaries, and tags live in a separate `ai_metadata` table. That table stores
+only validated model output, model and prompt versions, aggregate token usage, enrichment time,
+and the source size/mtime/index-version fingerprint. It does not store the outbound conversation.
+An unchanged fingerprint is skipped; a changed source or prompt version becomes eligible again.
+Deleting `sessions.db` removes this metadata without touching native Codex JSONL.
+
 ## Visibility and deletion
 
 Default list, project-count, and search queries include only interactive sessions. Background

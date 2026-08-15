@@ -91,6 +91,45 @@ func TestUpsertAndListByProject(t *testing.T) {
 	}
 }
 
+func TestAIMetadataCandidatesTrackSourceFingerprint(t *testing.T) {
+	s := openTemp(t)
+	session := newSession("codex", "ai-1", "proj-a", "Original title", "body")
+	if err := s.Upsert(session); err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := s.ListEnrichmentCandidates(10, 1, false)
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("initial candidates = %d, %v", len(candidates), err)
+	}
+	metadata := AIMetadata{
+		Agent: "codex", SessionID: "ai-1", SourceSize: session.Size, SourceMtime: session.Mtime,
+		SourceIndexVersion: session.IndexVersion, PromptVersion: 1, Model: "test-model",
+		Title: "Generated title", Summary: "Generated summary", Tags: []string{"go", "sqlite"},
+		InputTokens: 100, OutputTokens: 20, EnrichedAt: "2026-08-15T00:00:00Z",
+	}
+	if err := s.UpsertAIMetadata(metadata); err != nil {
+		t.Fatal(err)
+	}
+	if candidates, err = s.ListEnrichmentCandidates(10, 1, false); err != nil || len(candidates) != 0 {
+		t.Fatalf("unchanged candidates = %d, %v", len(candidates), err)
+	}
+	stored, ok, err := s.GetAIMetadata("codex", "ai-1")
+	if err != nil || !ok || stored.Title != metadata.Title || len(stored.Tags) != 2 {
+		t.Fatalf("stored metadata = %#v, ok=%v err=%v", stored, ok, err)
+	}
+
+	session.Mtime++
+	if err := s.Upsert(session); err != nil {
+		t.Fatal(err)
+	}
+	if candidates, err = s.ListEnrichmentCandidates(10, 1, false); err != nil || len(candidates) != 1 {
+		t.Fatalf("stale candidates = %d, %v", len(candidates), err)
+	}
+	if candidates, err = s.ListEnrichmentCandidates(10, 1, true); err != nil || len(candidates) != 1 {
+		t.Fatalf("forced candidates = %d, %v", len(candidates), err)
+	}
+}
+
 func TestDefaultQueriesHideBackgroundSessions(t *testing.T) {
 	s := openTemp(t)
 

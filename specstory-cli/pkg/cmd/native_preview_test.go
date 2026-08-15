@@ -23,7 +23,7 @@ func writeNativePreviewFixture(t *testing.T) string {
 	path := filepath.Join(t.TempDir(), "rollout-test-session.jsonl")
 	content := `{"timestamp":"2026-08-15T01:00:00Z","type":"session_meta","payload":{"id":"11111111-1111-1111-1111-111111111111","timestamp":"2026-08-15T01:00:00Z","cwd":"/synthetic/project","source":"cli"}}
 {"timestamp":"2026-08-15T01:00:01Z","type":"turn_context","payload":{"model":"gpt-test"}}
-{"timestamp":"2026-08-15T01:00:02Z","type":"event_msg","payload":{"type":"user_message","message":"user asks with key ` + previewTestSecret + `"}}
+{"timestamp":"2026-08-15T01:00:02Z","type":"event_msg","payload":{"type":"user_message","message":"user asks with key ` + previewTestSecret + ` from /synthetic/project in session 11111111-1111-1111-1111-111111111111"}}
 {"timestamp":"2026-08-15T01:00:03Z","type":"event_msg","payload":{"type":"agent_reasoning","text":"synthetic reasoning marker"}}
 {"timestamp":"2026-08-15T01:00:04Z","type":"event_msg","payload":{"type":"agent_message","message":"synthetic assistant answer"}}
 {"timestamp":"2026-08-15T01:00:05Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call-1","arguments":"{\"cmd\":\"printf tool-input-marker\"}"}}

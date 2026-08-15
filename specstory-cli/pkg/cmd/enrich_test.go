@@ -9,6 +9,15 @@ import (
 	"testing"
 )
 
+func TestEnrichLiveRequiresExplicitConfirmation(t *testing.T) {
+	command := CreateEnrichCommand()
+	command.SetArgs(nil)
+	err := command.Execute()
+	if err == nil || !strings.Contains(err.Error(), "requires --yes") {
+		t.Fatalf("Execute() error = %v; want explicit confirmation error", err)
+	}
+}
+
 func TestEnrichModelsIsExplicitAndPrintsOnlyModelIDs(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -688,6 +688,18 @@ func drainToStore(store *sessionindex.Store, ch <-chan sessionindex.Session) err
 // Thinking, tool calls, tool parameters, and tool output are excluded structurally before
 // secret detection. If redaction is unavailable, it returns an empty body (fail closed).
 func flattenBody(data *schema.SessionData) string {
+	redacted, err := flattenBodySafe(data)
+	if err != nil {
+		slog.Error("reindex: redaction unavailable; omitting session body", "error", err)
+		return ""
+	}
+	return redacted
+}
+
+// flattenBodySafe is the fail-closed form shared by indexing and outbound
+// enrichment. It structurally excludes reasoning, tools, parameters, output, and
+// session metadata before the remaining conversation text reaches the redactor.
+func flattenBodySafe(data *schema.SessionData) (string, error) {
 	var b strings.Builder
 	if data != nil {
 		for _, exchange := range data.Exchanges {
@@ -709,10 +721,9 @@ func flattenBody(data *schema.SessionData) string {
 	}
 	redacted, _, err := redact.RedactContentSafe(b.String())
 	if err != nil {
-		slog.Error("reindex: redaction unavailable; omitting session body", "error", err)
-		return ""
+		return "", err
 	}
-	return redacted
+	return redacted, nil
 }
 
 // countTurns returns (user prompts, all messages) across the session's exchanges.
