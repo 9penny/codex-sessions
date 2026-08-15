@@ -142,6 +142,9 @@ type sessionTUI struct {
 	previewing    bool
 	reader        viewport.Model
 	readerSession *sessionindex.Session
+	// previewRevealed is true only while the active reader contains an explicitly requested
+	// unmasked native preview. Closing or resuming clears both the flag and reader content.
+	previewRevealed bool
 	// previewSeq is bumped on every openPreview. A cloud preview loads its markdown off-thread
 	// (a blob fetch), so its late-arriving result is applied only when this seq still matches —
 	// dropping the result if the user has since closed the reader or moved to another session.
@@ -381,6 +384,8 @@ func (m sessionTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyCloudSearchResult(msg)
 	case cloudPreviewMsg:
 		return m.applyCloudPreview(msg)
+	case nativePreviewMsg:
+		return m.applyNativePreview(msg)
 	case tea.KeyPressMsg:
 		// Any keypress dismisses a lingering status notice (e.g. a failed delete); it has served
 		// its purpose once the user has read it and moved on.
@@ -731,14 +736,20 @@ func (m sessionTUI) updateSearch(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m sessionTUI) updatePreview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case " ", "space", "esc", "q":
-		m.previewing = false
-		m.readerSession = nil
+		m.clearPreview()
 		return m, nil
+	case "R":
+		if m.readerSession == nil || m.readerSession.IsCloud {
+			return m, nil
+		}
+		m.previewSeq++
+		m.previewRevealed = false
+		m.reader.SetContent(renderGlamour("_(Loading unmasked native preview…)_", m.width))
+		return m, nativePreviewCmd(m.registry, *m.readerSession, m.previewSeq, true)
 	case "r":
 		if m.readerSession != nil {
 			sess := m.readerSession
-			m.previewing = false
-			m.readerSession = nil
+			m.clearPreview()
 			return m.beginResume(sess)
 		}
 		return m, nil
@@ -757,17 +768,26 @@ func (m sessionTUI) openPreview(s *sessionindex.Session) (tea.Model, tea.Cmd) {
 	m.reader.GotoTop()
 	m.previewing = true
 	m.previewSeq++
+	m.previewRevealed = false
 
-	// A cloud-only session has no local native file and no local FTS body, so sessionMarkdown
-	// can't render it. Fetch its SessionData blob from the cloud (the same one resume uses) and
-	// render it off-thread, showing a placeholder meanwhile so the reader opens instantly.
+	// Retained archived cloud rows use their existing off-thread blob preview path. Supported
+	// local rows always parse the native file on demand below.
 	if s.IsCloud {
 		m.reader.SetContent(renderGlamour("_Loading from SpecStory Cloud…_", m.width))
 		return m, cloudPreviewCmd(*s, m.previewSeq)
 	}
 
-	m.reader.SetContent(renderGlamour(sessionMarkdown(m.registry, m.store, s), m.width))
-	return m, nil
+	m.reader.SetContent(renderGlamour("_(Loading masked native preview…)_", m.width))
+	return m, nativePreviewCmd(m.registry, *s, m.previewSeq, false)
+}
+
+func (m *sessionTUI) clearPreview() {
+	m.previewing = false
+	m.readerSession = nil
+	m.previewRevealed = false
+	m.previewSeq++ // invalidate any in-flight native/cloud preview result
+	m.reader.SetContent("")
+	m.reader.GotoTop()
 }
 
 // previewHeight is the viewport height inside the preview chrome (title + two rules + footer).

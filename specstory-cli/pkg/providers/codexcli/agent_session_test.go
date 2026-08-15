@@ -1,15 +1,62 @@
 package codexcli
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/xeipuuv/gojsonschema"
 )
+
+func TestGenerateAgentSessionDoesNotLogMalformedToolArguments(t *testing.T) {
+	const secret = "log-leak-sentinel-AIzaSyD8xKq2mL9nP4rT7wZ0aB3cE6fH1jG5kM7"
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	records := []map[string]interface{}{
+		{
+			"type": "session_meta",
+			"payload": map[string]interface{}{
+				"id":        "11111111-1111-1111-1111-111111111111",
+				"timestamp": "2026-08-15T01:00:00Z",
+				"cwd":       "/synthetic/project",
+			},
+		},
+		{
+			"type":      "event_msg",
+			"timestamp": "2026-08-15T01:00:01Z",
+			"payload": map[string]interface{}{
+				"type":    "user_message",
+				"message": "synthetic prompt",
+			},
+		},
+		{
+			"type":      "response_item",
+			"timestamp": "2026-08-15T01:00:02Z",
+			"payload": map[string]interface{}{
+				"type":      "function_call",
+				"name":      "exec_command",
+				"call_id":   "call-1",
+				"arguments": `{"cmd":"` + secret,
+			},
+		},
+	}
+
+	if _, err := GenerateAgentSession(records, "/synthetic/project"); err != nil {
+		t.Fatalf("GenerateAgentSession() error = %v", err)
+	}
+	if strings.Contains(logs.String(), secret) {
+		t.Fatalf("malformed tool arguments leaked into logs:\n%s", logs.String())
+	}
+}
 
 // getSchemaPath returns the absolute path to the agent session schema
 func getSchemaPath() string {
