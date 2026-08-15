@@ -278,6 +278,7 @@ csessions resume`,
 	helpCmd := createLocalHelpCommand(root)
 	root.SetHelpCommand(helpCmd)
 	root.AddCommand(
+		cmdpkg.CreateEnrichCommand(),
 		helpCmd,
 		cmdpkg.CreateLocalResumeCommand(),
 		cmdpkg.CreateReindexCommand(),
