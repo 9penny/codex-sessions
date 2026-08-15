@@ -54,16 +54,14 @@ const (
 	reindexVersion = 9
 )
 
-// CreateReindexCommand builds the `specstory reindex` command: a full, from-scratch
-// rebuild of the restore index (~/.specstory/sessions.db) of every coding-agent session
-// SpecStory can find, across all projects and providers. See docs/SESSIONS-DB.md.
+// CreateReindexCommand builds `csessions reindex`, rebuilding the disposable XDG index.
 func CreateReindexCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reindex",
-		Short: "Rebuild the restore index of all known agent sessions",
-		Long: `Rebuild the restore index used by 'specstory resume'.
+		Short: "Rebuild the local Codex session index",
+		Long: `Rebuild the derived index used by 'csessions resume'.
 
-'reindex' enumerates every session across all installed agents and projects and writes a searchable index to ~/.specstory/sessions.db. It is incremental: a session whose native file is unchanged since it was last indexed is skipped, so re-runs are fast. Use --force to re-index everything regardless. The index is a derived cache: it is safe to delete.`,
+'reindex' scans native sessions and writes a searchable database under the XDG data directory. It is incremental: an unchanged native file is skipped, so re-runs are fast. Use --force to re-index everything. The database is derived data and is safe to delete.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			force, _ := cmd.Flags().GetBool("force")

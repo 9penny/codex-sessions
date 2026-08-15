@@ -203,7 +203,7 @@ specstory watch`
 				}
 
 				// Log startup information
-				slog.Info("=== SpecStory Starting ===")
+				slog.Info("=== Codex Sessions Starting ===")
 				slog.Info("Version", "version", version)
 				slog.Info("Command line", "args", strings.Join(os.Args, " "))
 				if cwd, err := os.Getwd(); err == nil {
@@ -233,22 +233,27 @@ specstory watch`
 // Inherited commands remain compiled and tested as reference code, but they are not registered.
 func createLocalCommandTree() *cobra.Command {
 	root := createRootCommand()
-	root.Long = "SpecStory provides local search and resume access to Codex CLI sessions."
+	root.Use = "csessions [command]"
+	root.Short = "Browse, search, and resume local Codex CLI sessions"
+	root.Long = "Codex Sessions provides local search and resume access to Codex CLI sessions."
 	root.Example = `# Search local Codex CLI sessions
-specstory search "query"
+csessions search "query"
 
 # Resume a local Codex CLI session
-specstory resume codex`
+csessions resume codex`
 	root.Version = version
-	root.SetVersionTemplate("{{.Version}} (SpecStory)")
-	helpCmd := cmdpkg.CreateHelpCommand(root)
+	root.SetVersionTemplate("Codex Sessions {{.Version}}\n")
+	root.Run = func(command *cobra.Command, _ []string) {
+		_ = command.Help()
+	}
+	helpCmd := createLocalHelpCommand(root)
 	root.SetHelpCommand(helpCmd)
 	root.AddCommand(
 		helpCmd,
 		cmdpkg.CreateLocalResumeCommand(),
 		cmdpkg.CreateReindexCommand(),
 		cmdpkg.CreateLocalSearchCommand(),
-		cmdpkg.CreateVersionCommand(version),
+		createLocalVersionCommand(),
 	)
 
 	root.PersistentFlags().BoolVar(&console, "console", console, "enable error/warn/info output to stdout")
@@ -258,13 +263,46 @@ specstory resume codex`
 	return root
 }
 
+func createLocalHelpCommand(root *cobra.Command) *cobra.Command {
+	return &cobra.Command{
+		Use:   "help [command]",
+		Short: "Help about any command",
+		Args:  cobra.ArbitraryArgs,
+		RunE: func(_ *cobra.Command, args []string) error {
+			target := root
+			if len(args) > 0 {
+				var err error
+				target, _, err = root.Find(args)
+				if err != nil {
+					return err
+				}
+			}
+			return target.Help()
+		},
+	}
+}
+
+func createLocalVersionCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Show Codex Sessions version information",
+		Run: func(*cobra.Command, []string) {
+			fmt.Printf("Codex Sessions %s\n", version)
+		},
+	}
+}
+
 var rootCmd *cobra.Command
 
 // retainArchivedSpecStorySymbols keeps the inherited command implementation checked by
 // the compiler and linters while it remains deliberately absent from the local command tree.
 func retainArchivedSpecStorySymbols() {
+	_ = noAnalytics
+	_ = noVersionCheck
 	_ = cloudURL
 	_ = cloudToken
+	_ = telemetryEndpoint
+	_ = telemetryServiceName
 	_ = provenanceEnabled
 	_ = projectPathOverride
 	_ = gitOriginOverride
@@ -1497,53 +1535,9 @@ func main() {
 		}
 	}
 
-	// Load configuration early (before logging setup) so TOML settings can affect logging
-	// Priority: CLI flags > local project config > user-level config
-	// Note: OTEL_* env vars take highest priority for telemetry
-	cfg, cfgErr := config.Load(&config.CLIOverrides{
-		OutputDir:            outputDir,
-		ConfigDir:            configDir,
-		LocalTimeZone:        localTimeZone,
-		NoVersionCheck:       noVersionCheck,
-		NoCloudSync:          noCloudSync,
-		OnlyCloudSync:        onlyCloudSync,
-		DebugDir:             debugDir,
-		Console:              console,
-		Log:                  logFile,
-		Debug:                debug,
-		Silent:               silent,
-		NoAnalytics:          noAnalytics,
-		TelemetryEndpoint:    telemetryEndpoint,
-		TelemetryServiceName: telemetryServiceName,
-		NoTelemetryPrompts:   noTelemetryPrompts,
-	})
-	if cfgErr != nil {
-		// Use fallback empty config if load fails - will log error after logging is set up
-		cfg = &config.Config{}
-	}
-	// Store config for use by command functions (e.g., provider commands in run)
-	loadedConfig = cfg
-
-	// Apply config values to flag variables so the rest of the code can use them unchanged.
-	// This merges TOML config with CLI flags (CLI flags take precedence via config.Load).
-	if cfg.GetOutputDir() != "" {
-		outputDir = utils.ExpandTilde(cfg.GetOutputDir())
-	}
-	if cfg.GetDebugDir() != "" {
-		debugDir = utils.ExpandTilde(cfg.GetDebugDir())
-	}
-	localTimeZone = cfg.IsLocalTimeZoneEnabled()
-	noVersionCheck = !cfg.IsVersionCheckEnabled()
-	noCloudSync = !cfg.IsCloudSyncEnabled()
-	onlyCloudSync = !cfg.IsLocalSyncEnabled()
-	noAnalytics = !cfg.IsAnalyticsEnabled()
-	console = cfg.IsConsoleEnabled()
-	logFile = cfg.IsLogEnabled()
-	debug = cfg.IsDebugEnabled()
-	silent = cfg.IsSilentEnabled()
-
-	noTelemetryPrompts = noTelemetryPrompts || cfg.IsTelemetryPromptsDisabled()
-	noRedactSecrets = noRedactSecrets || !cfg.IsRedactionEnabled()
+	// The active product deliberately ignores inherited ~/.specstory and per-project
+	// configuration. Local TUI preferences are loaded lazily from XDG_CONFIG_HOME.
+	loadedConfig = &config.Config{}
 
 	// Set SPI debug dir override before any commands run
 	if debugDir != "" {
@@ -1573,20 +1567,15 @@ func main() {
 	// compiled and tested, but are deliberately unreachable from the executable.
 	rootCmd = createLocalCommandTree()
 
-	// Log config load error after logging is set up
-	if cfgErr != nil {
-		slog.Warn("Failed to load config file, using defaults", "error", cfgErr)
-	}
-
 	// Ensure proper cleanup and logging on exit
 	defer func() {
 		if r := recover(); r != nil {
-			slog.Error("=== SpecStory PANIC ===", "panic", r)
+			slog.Error("=== Codex Sessions PANIC ===", "panic", r)
 			log.CloseLogger()
 			panic(r) // Re-panic after logging
 		}
 		if console || logFile {
-			slog.Info("=== SpecStory Exiting ===", "code", 0, "status", "normal termination")
+			slog.Info("=== Codex Sessions Exiting ===", "code", 0, "status", "normal termination")
 		}
 		log.CloseLogger()
 		if !archivedCloudShutdownEnabled {
@@ -1679,7 +1668,7 @@ func main() {
 
 	if err := fang.Execute(context.Background(), rootCmd, fang.WithVersion(version)); err != nil {
 		if console || logFile {
-			slog.Error("=== SpecStory Exiting ===", "code", 1, "status", "error")
+			slog.Error("=== Codex Sessions Exiting ===", "code", 1, "status", "error")
 			slog.Error("Error", "error", err)
 		}
 		fmt.Fprintln(os.Stderr) // Visual separation makes error output more noticeable

@@ -59,7 +59,11 @@ func createSearchCommand(cloudURL *string, defaults SessionFlagDefaults, localOn
 
 			total, _ := store.Count()
 			if total == 0 {
-				fprintln(os.Stderr, "\nNo agent sessions indexed yet. Run an agent, then try again (or `specstory reindex`).")
+				reindexCommand := "specstory reindex"
+				if localOnly {
+					reindexCommand = "csessions reindex"
+				}
+				fprintf(os.Stderr, "\nNo agent sessions indexed yet. Run an agent, then try again (or `%s`).\n", reindexCommand)
 				return nil
 			}
 
@@ -83,20 +87,28 @@ func createSearchCommand(cloudURL *string, defaults SessionFlagDefaults, localOn
 			}
 
 			viewMode, lastAgent := "dense", ""
-			if cfg, _ := config.Load(nil); cfg != nil {
+			var cfg *config.Config
+			if localOnly {
+				cfg, _ = config.LoadCodexSessions()
+			} else {
+				cfg, _ = config.Load(nil)
+			}
+			if cfg != nil {
 				viewMode = cfg.GetResumeViewMode()
 				lastAgent = cfg.GetResumeLastAgent()
 			}
 
-			analytics.TrackEvent(analytics.EventSearchActivated, analytics.Properties{
-				"had_initial_query": initialQuery != "",
-				"indexed_sessions":  total,
-			})
+			if !localOnly {
+				analytics.TrackEvent(analytics.EventSearchActivated, analytics.Properties{
+					"had_initial_query": initialQuery != "",
+					"indexed_sessions":  total,
+				})
+			}
 
 			// `search` is the same TUI as `resume`, entered straight into the all-projects
 			// FTS with the input focused. See newSessionTUI / sessionTUIOpts.
 			model := newSessionTUI(store, registry, homeID, homeName, homeSessions, agents, installed, sessionTUIOpts{
-				title:         "SpecStory Search",
+				title:         localTitle(localOnly, "Search"),
 				lastAgent:     lastAgent,
 				viewMode:      viewMode,
 				initialQuery:  initialQuery,
@@ -129,8 +141,14 @@ func createSearchCommand(cloudURL *string, defaults SessionFlagDefaults, localOn
 			}
 			// Persist the view mode the user actually ended on (they may have toggled it with
 			// `v` mid-search), not the value loaded at startup — matching the `resume` path.
-			if err := config.SaveResumePrefs(rm.viewMode, rm.result.targetID); err != nil {
-				slog.Debug("search: failed to persist resume prefs", "error", err)
+			var saveErr error
+			if localOnly {
+				saveErr = config.SaveCodexSessionsResumePrefs(rm.viewMode, rm.result.targetID)
+			} else {
+				saveErr = config.SaveResumePrefs(rm.viewMode, rm.result.targetID)
+			}
+			if saveErr != nil {
+				slog.Debug("search: failed to persist resume prefs", "error", saveErr)
 			}
 
 			// A search hit can be from another project; resume must load the source from its
@@ -149,6 +167,12 @@ func createSearchCommand(cloudURL *string, defaults SessionFlagDefaults, localOn
 			}
 			return launchResume(plan, cwd, launchOpts)
 		},
+	}
+	if localOnly {
+		searchCmd.Short = "Search local Codex CLI sessions"
+		searchCmd.Long = `Search the redacted local Codex Sessions index.
+
+'search' opens an interactive full-text search. Press space to preview a match and 'r' to resume it with Codex CLI.`
 	}
 
 	if !localOnly {

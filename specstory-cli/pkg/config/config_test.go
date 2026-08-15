@@ -26,6 +26,126 @@ func createTempConfigFile(t *testing.T, dir, content string) string {
 	return configPath
 }
 
+func TestResolveCodexSessionsPaths(t *testing.T) {
+	tests := []struct {
+		name       string
+		home       string
+		configHome string
+		dataHome   string
+		cacheHome  string
+		wantConfig string
+		wantData   string
+		wantCache  string
+	}{
+		{
+			name:       "home defaults",
+			home:       "/home/tester",
+			wantConfig: "/home/tester/.config/csessions",
+			wantData:   "/home/tester/.local/share/csessions",
+			wantCache:  "/home/tester/.cache/csessions",
+		},
+		{
+			name:       "xdg overrides including WSL mount",
+			home:       "/home/tester",
+			configHome: "/mnt/c/Users/tester/config",
+			dataHome:   "/mnt/c/Users/tester/data",
+			cacheHome:  "/mnt/c/Users/tester/cache",
+			wantConfig: "/mnt/c/Users/tester/config/csessions",
+			wantData:   "/mnt/c/Users/tester/data/csessions",
+			wantCache:  "/mnt/c/Users/tester/cache/csessions",
+		},
+		{
+			name:       "relative xdg values are ignored",
+			home:       "/home/tester",
+			configHome: "relative-config",
+			dataHome:   "relative-data",
+			cacheHome:  "relative-cache",
+			wantConfig: "/home/tester/.config/csessions",
+			wantData:   "/home/tester/.local/share/csessions",
+			wantCache:  "/home/tester/.cache/csessions",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("HOME", tt.home)
+			t.Setenv("XDG_CONFIG_HOME", tt.configHome)
+			t.Setenv("XDG_DATA_HOME", tt.dataHome)
+			t.Setenv("XDG_CACHE_HOME", tt.cacheHome)
+
+			paths, err := ResolveCodexSessionsPaths()
+			if err != nil {
+				t.Fatalf("ResolveCodexSessionsPaths() error = %v", err)
+			}
+			if paths.ConfigDir != tt.wantConfig {
+				t.Errorf("ConfigDir = %q, want %q", paths.ConfigDir, tt.wantConfig)
+			}
+			if paths.DataDir != tt.wantData {
+				t.Errorf("DataDir = %q, want %q", paths.DataDir, tt.wantData)
+			}
+			if paths.CacheDir != tt.wantCache {
+				t.Errorf("CacheDir = %q, want %q", paths.CacheDir, tt.wantCache)
+			}
+			if paths.ConfigFile != filepath.Join(tt.wantConfig, ConfigFileName) {
+				t.Errorf("ConfigFile = %q", paths.ConfigFile)
+			}
+			if paths.DatabaseFile != filepath.Join(tt.wantData, "sessions.db") {
+				t.Errorf("DatabaseFile = %q", paths.DatabaseFile)
+			}
+		})
+	}
+}
+
+func TestCodexSessionsConfigIgnoresLegacyConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("XDG_CACHE_HOME", "")
+
+	legacyPath := filepath.Join(home, SpecStoryDir, CLIDir, ConfigFileName)
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := "[resume]\nview_mode = \"sparse\"\nlast_agent = \"claude\"\n"
+	if err := os.WriteFile(legacyPath, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadCodexSessions()
+	if err != nil {
+		t.Fatalf("LoadCodexSessions() error = %v", err)
+	}
+	if cfg.GetResumeViewMode() != "dense" || cfg.GetResumeLastAgent() != "" {
+		t.Fatalf("legacy preferences leaked into Codex Sessions: %+v", cfg.Resume)
+	}
+
+	if err := SaveCodexSessionsResumePrefs("sparse", "codex"); err != nil {
+		t.Fatalf("SaveCodexSessionsResumePrefs() error = %v", err)
+	}
+	paths, err := ResolveCodexSessionsPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(paths.ConfigFile); err != nil {
+		t.Fatalf("XDG config was not created: %v", err)
+	}
+	cfg, err = LoadCodexSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GetResumeViewMode() != "sparse" || cfg.GetResumeLastAgent() != "codex" {
+		t.Fatalf("saved preferences = %+v", cfg.Resume)
+	}
+	legacyAfter, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(legacyAfter) != legacy {
+		t.Fatal("legacy config was modified")
+	}
+}
+
 // TestProcessTemplate tests the template processing for user/project levels
 func TestProcessTemplate(t *testing.T) {
 	template := `# Header

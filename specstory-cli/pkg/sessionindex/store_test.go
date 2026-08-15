@@ -9,6 +9,22 @@ import (
 	"github.com/specstoryai/getspecstory/specstory-cli/pkg/spi"
 )
 
+func TestDefaultPathUsesXDGDataHome(t *testing.T) {
+	home := t.TempDir()
+	dataHome := filepath.Join(home, "xdg-data")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", dataHome)
+
+	got, err := DefaultPath()
+	if err != nil {
+		t.Fatalf("DefaultPath() error = %v", err)
+	}
+	want := filepath.Join(dataHome, "csessions", "sessions.db")
+	if got != want {
+		t.Fatalf("DefaultPath() = %q, want %q", got, want)
+	}
+}
+
 func newSession(agent, id, projectID, name, body string) Session {
 	return Session{
 		ProjectID:   projectID,
