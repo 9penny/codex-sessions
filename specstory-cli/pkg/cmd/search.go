@@ -21,6 +21,15 @@ import (
 // search with the input focused: type to search, `space` previews a match (glamour-rendered),
 // and `r` resumes it through the same launch path as `resume`. See docs/SESSION-SEARCH.md.
 func CreateSearchCommand(cloudURL *string, defaults SessionFlagDefaults) *cobra.Command {
+	return createSearchCommand(cloudURL, defaults, false)
+}
+
+// CreateLocalSearchCommand builds search without inherited cloud or export flags.
+func CreateLocalSearchCommand() *cobra.Command {
+	return createSearchCommand(nil, SessionFlagDefaults{}, true)
+}
+
+func createSearchCommand(cloudURL *string, defaults SessionFlagDefaults, localOnly bool) *cobra.Command {
 	searchCmd := &cobra.Command{
 		Use:   "search [query…]",
 		Short: "Search and read your past coding-agent sessions",
@@ -35,6 +44,7 @@ func CreateSearchCommand(cloudURL *string, defaults SessionFlagDefaults) *cobra.
 			// Read the run/watch flags that affect the resumed session (shared with `resume`),
 			// before opening the index so the debug-dir override is in effect.
 			launchOpts := readResumeLaunchOpts(cmd)
+			launchOpts.localOnly = localOnly
 
 			cwd, err := os.Getwd()
 			if err != nil {
@@ -91,6 +101,7 @@ func CreateSearchCommand(cloudURL *string, defaults SessionFlagDefaults) *cobra.
 				viewMode:      viewMode,
 				initialQuery:  initialQuery,
 				startInSearch: true,
+				localOnly:     localOnly,
 			})
 			p := tea.NewProgram(model)
 			cancelWarm := startIndexWarm(p, homeID, builtFresh)
@@ -140,6 +151,8 @@ func CreateSearchCommand(cloudURL *string, defaults SessionFlagDefaults) *cobra.
 		},
 	}
 
-	registerSessionProcessingFlags(searchCmd, cloudURL, defaults)
+	if !localOnly {
+		registerSessionProcessingFlags(searchCmd, cloudURL, defaults)
+	}
 	return searchCmd
 }

@@ -75,6 +75,16 @@ type agentChoice struct {
 // the current project's sessions across all agents, pick one, choose a target agent, then
 // reconstruct (cross-agent) or native-resume (same agent) and launch with auto-save.
 func CreateResumeCommand(cloudURL *string, defaults SessionFlagDefaults) *cobra.Command {
+	return createResumeCommand(cloudURL, defaults, false)
+}
+
+// CreateLocalResumeCommand builds the local-only resume surface used by Codex Sessions.
+// The inherited cloud/session-export flags remain available only through the archived command.
+func CreateLocalResumeCommand() *cobra.Command {
+	return createResumeCommand(nil, SessionFlagDefaults{}, true)
+}
+
+func createResumeCommand(cloudURL *string, defaults SessionFlagDefaults, localOnly bool) *cobra.Command {
 	longDesc := `Resume a past coding-agent session — in the same agent, or a different one.
 
 'resume' opens an interactive picker of the sessions in the current project across all agents. Press tab to switch projects. Pick a session, then choose which installed agent to continue it in, and go. Resuming into a different agent reconstructs the conversation into that agent's native format first.
@@ -125,6 +135,7 @@ Resuming SpecStory Cloud sessions (from your other machines) requires an active 
 
 			// Read the run/watch flags that affect the resumed session (shared with `search`).
 			launchOpts := readResumeLaunchOpts(cmd)
+			launchOpts.localOnly = localOnly
 
 			cwd, err := os.Getwd()
 			if err != nil {
@@ -168,7 +179,7 @@ Resuming SpecStory Cloud sessions (from your other machines) requires an active 
 				pinned = resolved
 			}
 
-			plan, err := selectResumeViaTUI(registry, store, projectID, projectName, presetTarget, builtFresh, pinned)
+			plan, err := selectResumeViaTUI(registry, store, projectID, projectName, presetTarget, builtFresh, pinned, localOnly)
 			if err != nil {
 				return err
 			}
@@ -181,7 +192,9 @@ Resuming SpecStory Cloud sessions (from your other machines) requires an active 
 		},
 	}
 
-	registerSessionProcessingFlags(resumeCmd, cloudURL, defaults)
+	if !localOnly {
+		registerSessionProcessingFlags(resumeCmd, cloudURL, defaults)
+	}
 	// --session is registered on `resume` only — deliberately NOT in the shared
 	// flag registration, so `search` is untouched.
 	resumeCmd.Flags().String("session", "", "resume a specific session by URI or UUID (specstory://…, cloud permalink, or session UUID)")
@@ -223,6 +236,7 @@ type resumeLaunchOpts struct {
 	noCloudSync       bool
 	provenanceEnabled bool
 	processing        session.ProcessingOptions // shared autosave processing options
+	localOnly         bool
 }
 
 func resumeLaunchCwd(plan *resumePlan, currentCwd string) string {
@@ -235,6 +249,10 @@ func resumeLaunchCwd(plan *resumePlan, currentCwd string) string {
 // launchResume reconstructs (cross-agent) or natively resumes the planned session and
 // runs the agent with auto-save + provenance — the shared tail of `resume` and `search`.
 func launchResume(plan *resumePlan, cwd string, o resumeLaunchOpts) error {
+	if o.localOnly {
+		return launchLocalResume(plan, cwd)
+	}
+
 	launchCwd := resumeLaunchCwd(plan, cwd)
 
 	// Setup output configuration and project identity (needed for auto-save + cloud).
@@ -314,6 +332,25 @@ func launchResume(plan *resumePlan, cwd string, o resumeLaunchOpts) error {
 	if err := plan.to.ExecAgentAndWatch(launchCwd, "", resumeSessionID, o.debugRaw, sessionCallback); err != nil {
 		slog.Error("Agent resume failed", "provider", plan.to.Name(), "error", err)
 		return err
+	}
+	return nil
+}
+
+func launchLocalResume(plan *resumePlan, cwd string) error {
+	if plan == nil || plan.to == nil {
+		return errors.New("resume plan is incomplete")
+	}
+	if plan.fromCloud {
+		return errors.New("cloud sessions are unavailable in local-only mode")
+	}
+
+	launchCwd := resumeLaunchCwd(plan, cwd)
+	resumeSessionID, err := prepareResumeTarget(plan, launchCwd, os.Stdout)
+	if err != nil {
+		return err
+	}
+	if err := plan.to.ExecAgentAndWatch(launchCwd, "", resumeSessionID, false, func(*spi.AgentChatSession) {}); err != nil {
+		return fmt.Errorf("agent resume failed: %w", err)
 	}
 	return nil
 }

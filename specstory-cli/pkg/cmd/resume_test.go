@@ -196,6 +196,8 @@ func TestBeginResumeWithoutPresetEntersTargetStep(t *testing.T) {
 type fakeProvider struct {
 	name        string
 	gotLoadPath string // projectPath captured from GetAgentChatSession
+	gotExecPath string
+	gotResumeID string
 	nativeDir   string // where NativeSessionPath places the reconstructed file
 	// reconstructUnsupported makes the fake report no native serializer, the way
 	// Antigravity does: both ReconstructSession and NativeSessionPath answer
@@ -237,7 +239,10 @@ func (f *fakeProvider) GetAgentChatSessions(string, bool, spi.ProgressCallback) 
 	return nil, nil
 }
 func (f *fakeProvider) ListAgentChatSessions(string) ([]spi.SessionMetadata, error) { return nil, nil }
-func (f *fakeProvider) ExecAgentAndWatch(string, string, string, bool, func(*spi.AgentChatSession)) error {
+
+func (f *fakeProvider) ExecAgentAndWatch(projectPath, _ string, resumeID string, _ bool, _ func(*spi.AgentChatSession)) error {
+	f.gotExecPath = projectPath
+	f.gotResumeID = resumeID
 	return nil
 }
 func (f *fakeProvider) WatchAgent(context.Context, string, bool, func(*spi.AgentChatSession)) error {
@@ -361,6 +366,35 @@ func TestResumeLaunchCwdUsesLocalSessionOrigin(t *testing.T) {
 				t.Errorf("resumeLaunchCwd() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestLocalOnlyResumeLaunchesWithoutAutosaveTail(t *testing.T) {
+	provider := &fakeProvider{name: "Codex CLI"}
+	plan := &resumePlan{
+		from:      provider,
+		fromID:    "codex",
+		fromCwd:   "/work/original-project",
+		to:        provider,
+		toID:      "codex",
+		sessionID: "synthetic-session",
+	}
+
+	if err := launchResume(plan, "/work/launcher", resumeLaunchOpts{localOnly: true}); err != nil {
+		t.Fatalf("launchResume() error = %v", err)
+	}
+	if provider.gotExecPath != plan.fromCwd {
+		t.Errorf("resume cwd = %q, want %q", provider.gotExecPath, plan.fromCwd)
+	}
+	if provider.gotResumeID != plan.sessionID {
+		t.Errorf("resume ID = %q, want %q", provider.gotResumeID, plan.sessionID)
+	}
+}
+
+func TestLocalOnlyTUIDoesNotStartCloudEligibility(t *testing.T) {
+	m := sessionTUI{localOnly: true}
+	if cmd := m.Init(); cmd != nil {
+		t.Fatal("local-only TUI Init returned a command; want no cloud eligibility work")
 	}
 }
 

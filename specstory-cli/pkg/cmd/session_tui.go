@@ -209,6 +209,7 @@ type sessionTUI struct {
 
 	width, height int
 	result        sessionTUIResult
+	localOnly     bool
 }
 
 // sessionTUIOpts carries the per-command entry configuration. The only real differences
@@ -221,6 +222,7 @@ type sessionTUIOpts struct {
 	viewMode      string // "dense" | "sparse"
 	initialQuery  string // search: pre-seed the all-projects query
 	startInSearch bool   // search: open in the all-projects FTS with the input focused
+	localOnly     bool   // disable every inherited cloud command and device lookup
 
 	// pinnedSession is a session resolved by `resume --session <uri>` (no preset agent). When
 	// set, the TUI opens straight at the target picker (modeTarget) with this session pinned as
@@ -256,6 +258,7 @@ func newSessionTUI(store *sessionindex.Store, registry *factory.Registry, projec
 		lastAgent:       opts.lastAgent,
 		all:             sessions,
 		viewMode:        opts.viewMode,
+		localOnly:       opts.localOnly,
 		search:          ti,
 		projSearch:      pi,
 		globalInput:     gi,
@@ -266,7 +269,9 @@ func newSessionTUI(store *sessionindex.Store, registry *factory.Registry, projec
 	for id, meta := range agents {
 		m.agentIDByName[meta.name] = id
 	}
-	m.deviceID = cloud.DeviceID()
+	if !m.localOnly {
+		m.deviceID = cloud.DeviceID()
+	}
 	m.rebuildAgentCycle()
 	m.applyFilter()
 
@@ -302,7 +307,10 @@ func newSessionTUI(store *sessionindex.Store, registry *factory.Registry, projec
 func (m sessionTUI) Init() tea.Cmd {
 	// Kick the async cloud-eligibility check once on open (off the UI thread). When it resolves,
 	// Update either starts the first cloud fetch (eligible) or sets the footer nudge.
-	cmds := []tea.Cmd{cloudEligibilityCmd()}
+	var cmds []tea.Cmd
+	if !m.localOnly {
+		cmds = append(cmds, cloudEligibilityCmd())
+	}
 	// Search starts focused in the all-projects input; kick the blink and any pre-seeded query.
 	if m.globalSearching {
 		cmds = append(cmds, m.globalInput.Focus())
