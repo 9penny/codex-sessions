@@ -8,6 +8,7 @@ on:
     paths:
       - 'specstory-cli/**'
       - '.goreleaser.yml'
+      - '.github/workflows/release.yml'
       - 'scripts/**'
       - 'install.sh'
       - '.github/workflows/ci.yml'
@@ -17,6 +18,7 @@ on:
     paths:
       - 'specstory-cli/**'
       - '.goreleaser.yml'
+      - '.github/workflows/release.yml'
       - 'scripts/**'
       - 'install.sh'
       - '.github/workflows/ci.yml'
@@ -24,6 +26,35 @@ on:
       - '!**/.specstory/**'
 
 jobs:
+  release-snapshot:
+    name: Release snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.5'
+          cache-dependency-path: specstory-cli/go.sum
+      - name: Validate release contract
+        run: ./scripts/validate-release-config.sh
+      - name: Build snapshot artifacts
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --snapshot --clean
+      - name: Test snapshot installer
+        env:
+          VERSION: v0.0.0
+          DOWNLOAD_BASE_URL: file://${{ github.workspace }}/dist
+          INSTALL_DIR: ${{ runner.temp }}/csessions-bin
+        run: |
+          mkdir -p "$INSTALL_DIR"
+          ./install.sh
+          "$INSTALL_DIR/csessions" version
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

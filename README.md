@@ -5,7 +5,7 @@ Codex Sessions is a local-only terminal browser for Codex CLI history. It indexe
 search, preview, resume, or start sessions without an account or cloud service.
 
 > This is a personal-first open-source fork under active development. The `dev` branch is the
-> integration branch; `v0.1.0` has not been tagged yet.
+> integration branch; `v0.1.0` is the first supported Linux/WSL release.
 
 ## Safety model
 
@@ -17,11 +17,23 @@ search, preview, resume, or start sessions without an account or cloud service.
 - v0.1 has no login, sync, analytics, telemetry, version check, or other outbound path.
 - Background `subagent`, `exec`, and unknown-source sessions are hidden by default.
 
-## Requirements and build
+## Install
 
 - Linux or WSL, including SSH terminals
-- Go 1.26.5
 - Codex CLI available as `codex`
+
+```bash
+# Review the installer before running it, then install the latest release.
+curl -fsSLO https://raw.githubusercontent.com/9penny/codex-sessions/v0.1.0/install.sh
+less install.sh
+bash install.sh
+```
+
+The installer downloads the matching Linux `amd64` or `arm64` archive, verifies it against the
+published SHA-256 checksums, and installs `csessions` in `/usr/local/bin`. To use another writable
+directory, run `INSTALL_DIR="$HOME/.local/bin" bash install.sh`.
+
+To build from source instead, install Go 1.26.5 and run:
 
 ```bash
 git clone https://github.com/9penny/codex-sessions.git
