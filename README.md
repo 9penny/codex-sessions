@@ -84,7 +84,8 @@ Deleting the derived database is safe; `csessions reindex` rebuilds it from nati
 ## Development
 
 The ordered work and release gates are in the
-[v0.1 implementation plan](specstory-cli/docs/V0.1-IMPLEMENTATION-PLAN.md). Run the standard
+[v0.2 implementation plan](specstory-cli/docs/V0.2-IMPLEMENTATION-PLAN.md). The completed v0.1
+scope remains in the [v0.1 plan](specstory-cli/docs/V0.1-IMPLEMENTATION-PLAN.md). Run the standard
 gate from `specstory-cli/`:
 
 ```bash

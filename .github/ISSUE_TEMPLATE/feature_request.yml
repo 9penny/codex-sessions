@@ -1,0 +1,39 @@
+name: Feature request
+description: Propose a focused Codex Sessions improvement
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please describe the workflow without including real prompts, transcripts, paths,
+        credentials, or private project names.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What local Codex session workflow is difficult today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should `csessions` do, and how would you invoke it?
+    validations:
+      required: true
+  - type: dropdown
+    id: privacy
+    attributes:
+      label: Does this require network access or new persistent data?
+      options:
+        - No
+        - Yes, network access
+        - Yes, new persistent data
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

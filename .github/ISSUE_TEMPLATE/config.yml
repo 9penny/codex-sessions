@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security or privacy report
+    url: https://github.com/9penny/codex-sessions/security/advisories/new
+    about: Privately report a vulnerability or possible transcript/credential exposure.
