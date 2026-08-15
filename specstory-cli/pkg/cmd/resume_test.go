@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/specstoryai/getspecstory/specstory-cli/pkg/sessionindex"
 	"github.com/specstoryai/getspecstory/specstory-cli/pkg/spi"
 	"github.com/specstoryai/getspecstory/specstory-cli/pkg/spi/factory"
@@ -245,6 +247,114 @@ func TestBeginResumeWithoutPresetEntersTargetStep(t *testing.T) {
 	}
 	if rm.chosen != sess {
 		t.Error("chosen session must be recorded before target selection")
+	}
+}
+
+func TestLocalTUIEnterResumesAndNewSessionUsesRecordedCwd(t *testing.T) {
+	cwd := t.TempDir()
+	sess := sessionindex.Session{
+		Agent: "codex", SessionID: "s1", ProjectID: "project", OriginCwd: cwd,
+		Kind: spi.SessionKindInteractive,
+	}
+	model := newSessionTUI(nil, factory.GetRegistry(), "project", "project", []sessionindex.Session{sess},
+		map[string]agentMeta{"codex": {name: "Codex CLI"}}, nil,
+		sessionTUIOpts{title: "Codex Sessions", localOnly: true})
+
+	resumedModel, resumeCmd := model.updateList(previewKey("enter", tea.KeyEnter))
+	resumed := resumedModel.(sessionTUI)
+	if resumeCmd == nil || resumed.result.session == nil || resumed.result.targetID != "codex" {
+		t.Fatalf("enter did not choose native Codex resume: result=%+v cmd=%v", resumed.result, resumeCmd != nil)
+	}
+
+	newModel, newCmd := model.updateList(previewKey("n", 'n'))
+	started := newModel.(sessionTUI)
+	if newCmd == nil || !started.result.newSession || started.result.newCwd != cwd {
+		t.Fatalf("n did not choose a new Codex session in recorded cwd: result=%+v cmd=%v", started.result, newCmd != nil)
+	}
+
+	empty := sessionTUI{mode: modeProjects, localOnly: true, homeCwd: cwd}
+	emptyModel, emptyCmd := empty.updateProjects(previewKey("n", 'n'))
+	emptyResult := emptyModel.(sessionTUI).result
+	if emptyCmd == nil || !emptyResult.newSession || emptyResult.newCwd != cwd {
+		t.Fatalf("n could not start the first Codex session: result=%+v cmd=%v", emptyResult, emptyCmd != nil)
+	}
+}
+
+func TestLocalTUIBlocksMissingRecordedCwd(t *testing.T) {
+	sess := sessionindex.Session{
+		Agent: "codex", SessionID: "s1", ProjectID: "project",
+		OriginCwd: filepath.Join(t.TempDir(), "missing"), Kind: spi.SessionKindInteractive,
+	}
+	model := newSessionTUI(nil, factory.GetRegistry(), "project", "project", []sessionindex.Session{sess},
+		map[string]agentMeta{"codex": {name: "Codex CLI"}}, nil,
+		sessionTUIOpts{title: "Codex Sessions", localOnly: true})
+
+	nextModel, cmd := model.updateList(previewKey("enter", tea.KeyEnter))
+	next := nextModel.(sessionTUI)
+	if cmd != nil || next.result.session != nil || !strings.Contains(next.statusMsg, "project directory") {
+		t.Fatalf("missing cwd was not explained and blocked: result=%+v status=%q", next.result, next.statusMsg)
+	}
+}
+
+func TestLocalTUIShowHiddenToggleAffectsBrowseAndSearch(t *testing.T) {
+	store, err := sessionindex.Open(filepath.Join(t.TempDir(), "sessions.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	var all []sessionindex.Session
+	for _, kind := range []spi.SessionKind{spi.SessionKindInteractive, spi.SessionKindSubagent, spi.SessionKindExec, spi.SessionKindUnknown} {
+		sess := sessionindex.Session{
+			ProjectID: "project", Agent: "codex", SessionID: string(kind), OriginCwd: t.TempDir(),
+			CreatedAt: "2026-08-15T01:00:00Z", UpdatedAt: "2026-08-15T01:00:00Z",
+			Kind: kind, Name: string(kind), Body: "visibility marker " + string(kind),
+		}
+		if err := store.Upsert(sess); err != nil {
+			t.Fatal(err)
+		}
+		all = append(all, sess)
+	}
+	visible, err := store.ListByProject("project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := newSessionTUI(store, factory.GetRegistry(), "project", "project", visible,
+		map[string]agentMeta{"codex": {name: "Codex CLI"}}, nil,
+		sessionTUIOpts{title: "Codex Sessions", localOnly: true})
+	model.width, model.height = 80, 24
+	_ = model.View() // terminal-size smoke: browse chrome and footer render without overflow panics
+	if len(model.filtered) != 1 {
+		t.Fatalf("default browse has %d sessions; want 1", len(model.filtered))
+	}
+
+	shownModel, _ := model.updateList(previewKey("h", 'h'))
+	shown := shownModel.(sessionTUI)
+	_ = shown.View() // hidden-mode badge and kind labels render at 80x24
+	if !shown.showHidden || len(shown.filtered) != len(all) || !strings.Contains(shown.renderHeader(), "HIDDEN SHOWN") {
+		t.Fatalf("show-hidden state not applied: shown=%v rows=%d header=%q", shown.showHidden, len(shown.filtered), shown.renderHeader())
+	}
+	shown.searchQuery = "marker"
+	shown.applyFilter()
+	if len(shown.filtered) != len(all) {
+		t.Fatalf("show-hidden search has %d rows; want %d", len(shown.filtered), len(all))
+	}
+
+	hiddenModel, _ := shown.updateList(previewKey("h", 'h'))
+	hidden := hiddenModel.(sessionTUI)
+	if hidden.showHidden || len(hidden.filtered) != 1 {
+		t.Fatalf("hiding background sessions left shown=%v rows=%d", hidden.showHidden, len(hidden.filtered))
+	}
+}
+
+func TestLaunchNewCodexSessionUsesCwdAndNoResumeID(t *testing.T) {
+	cwd := t.TempDir()
+	provider := &fakeProvider{name: "Codex CLI"}
+	plan := &resumePlan{to: provider, toID: "codex", fromCwd: cwd, newSession: true}
+	if err := launchNewCodexSession(plan, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if provider.gotExecPath != cwd || provider.gotResumeID != "" {
+		t.Fatalf("new Codex launch path=%q resumeID=%q; want path=%q and empty id", provider.gotExecPath, provider.gotResumeID, cwd)
 	}
 }
 

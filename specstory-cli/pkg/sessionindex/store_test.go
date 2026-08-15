@@ -1,6 +1,7 @@
 package sessionindex
 
 import (
+	"context"
 	"database/sql"
 	"path/filepath"
 	"strings"
@@ -124,6 +125,30 @@ func TestDefaultQueriesHideBackgroundSessions(t *testing.T) {
 		if len(hits) != 0 {
 			t.Errorf("Search(%q) returned hidden sessions: %+v", query, hits)
 		}
+	}
+}
+
+func TestVisibilityQueriesCanExplicitlyIncludeBackgroundSessions(t *testing.T) {
+	s := openTemp(t)
+	for _, kind := range []spi.SessionKind{
+		spi.SessionKindInteractive, spi.SessionKindSubagent, spi.SessionKindExec, spi.SessionKindUnknown,
+	} {
+		sess := newSession("codex", string(kind), "proj-a", string(kind), "shared marker "+string(kind))
+		sess.Kind = kind
+		mustUpsert(t, s, sess)
+	}
+
+	listed, err := s.ListByProjectVisibility("proj-a", true)
+	if err != nil || len(listed) != 4 {
+		t.Fatalf("ListByProjectVisibility(includeHidden) = %d, %v; want 4", len(listed), err)
+	}
+	hits, err := s.SearchContextVisibility(context.Background(), "marker", "", true)
+	if err != nil || len(hits) != 4 {
+		t.Fatalf("SearchContextVisibility(includeHidden) = %d, %v; want 4", len(hits), err)
+	}
+	projects, err := s.ListProjectsVisibility(true)
+	if err != nil || len(projects) != 1 || projects[0].Sessions != 4 {
+		t.Fatalf("ListProjectsVisibility(includeHidden) = %+v, %v; want one project with 4 sessions", projects, err)
 	}
 }
 

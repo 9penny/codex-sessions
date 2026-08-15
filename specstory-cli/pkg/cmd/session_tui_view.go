@@ -112,6 +112,9 @@ func (m sessionTUI) agentScope() string {
 func (m sessionTUI) renderHeader() string {
 	// Agent filter sits left, right after the project, rather than tucked in the far corner.
 	left := m.headerLeft(m.projectScope()) + styDim.Render("  ·  ") + m.agentScope()
+	if m.showHidden {
+		left += styDim.Render("  ·  ") + styWarn.Render("HIDDEN SHOWN")
+	}
 	// Surface the active machine filter alongside the agent one, matching its "agent: X" form.
 	if ml := m.machineScopeLabel(); ml != "" {
 		left += styDim.Render("  ·  ") + styDim.Render("machine: ") + stySel.Render(ml)
@@ -172,10 +175,14 @@ func rowCursor(selected bool) string {
 // column budgets for each (snippet markup needs slightly more room). Shared by
 // sessionRow and globalRow.
 func rowLabel(s sessionindex.Session, selected bool, snippet string, titleWidth, snippetWidth int) string {
-	if snippet != "" {
-		return renderSnippet(snippet, snippetWidth)
+	prefix := ""
+	if s.Kind != "" && s.Kind != "interactive" {
+		prefix = styWarn.Render("[" + string(s.Kind) + "] ")
 	}
-	return renderName(sessionTitle(s), selected, titleWidth)
+	if snippet != "" {
+		return prefix + renderSnippet(snippet, snippetWidth)
+	}
+	return prefix + renderName(sessionTitle(s), selected, titleWidth)
 }
 
 // sessionRow renders one list row. When snippet is non-empty (search active) the row
@@ -279,17 +286,29 @@ func (m sessionTUI) renderFooter() string {
 	if m.searching {
 		return m.search.View() + "    " + styFaint.Render("esc clear · enter apply")
 	}
+	if m.localOnly {
+		return styDim.Render(strings.Join([]string{
+			"↑↓ move", "↵ resume", "n new", "space preview", "/ search", m.hiddenKeyHint(), "q quit",
+		}, " · "))
+	}
 	scopeKey := "tab all-projects"
 	if m.inBrowser {
 		scopeKey = "tab/esc back"
 	}
-	keys := []string{"↑↓ move", "r resume", "space preview", "/ search", "a agent"}
+	keys := []string{"↑↓ move", "↵/r resume", "n new", "space preview", "/ search", "a agent", m.hiddenKeyHint()}
 	// Only offer the machine filter when there's actually another machine to focus on.
 	if len(m.machineCycle) > 1 {
 		keys = append(keys, "m machine")
 	}
 	keys = append(keys, "d delete", scopeKey, "v "+m.viewMode, "q quit")
 	return styDim.Render(strings.Join(keys, " · "))
+}
+
+func (m sessionTUI) hiddenKeyHint() string {
+	if m.showHidden {
+		return "h hide"
+	}
+	return "h hidden"
 }
 
 func (m sessionTUI) renderPreview() string {

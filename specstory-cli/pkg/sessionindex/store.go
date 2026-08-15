@@ -781,8 +781,15 @@ func (s *Store) GetSessionByID(sessionID string) (Session, bool, error) {
 // ListByProject returns a project's sessions, newest activity first. Body is not
 // populated (it lives only in the FTS index). Used by the `specstory resume` picker.
 func (s *Store) ListByProject(projectID string) ([]Session, error) {
+	return s.ListByProjectVisibility(projectID, false)
+}
+
+// ListByProjectVisibility optionally includes live background sessions. Normal product paths
+// pass false; the TUI's explicit show-hidden mode is the only supported true caller.
+func (s *Store) ListByProjectVisibility(projectID string, includeHidden bool) ([]Session, error) {
 	rows, err := s.db.Query(`SELECT `+sessionColumns+`
-		FROM sessions WHERE project_id = ? AND deleted = 0 AND (kind = '' OR kind = 'interactive') ORDER BY updated_at DESC, created_at DESC`, projectID)
+		FROM sessions WHERE project_id = ? AND deleted = 0`+kindVisibilitySQL(includeHidden)+`
+		ORDER BY updated_at DESC, created_at DESC`, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -809,8 +816,13 @@ type ProjectSummary struct {
 // Used by the all-projects view (date-bucketed). The unknown-project bucket is included;
 // the caller decides how to present it.
 func (s *Store) ListProjects() ([]ProjectSummary, error) {
+	return s.ListProjectsVisibility(false)
+}
+
+// ListProjectsVisibility optionally includes background sessions in project counts.
+func (s *Store) ListProjectsVisibility(includeHidden bool) ([]ProjectSummary, error) {
 	rows, err := s.db.Query(`SELECT project_id, project_name, agent, COUNT(*), MAX(updated_at)
-		FROM sessions WHERE deleted = 0 AND (kind = '' OR kind = 'interactive') GROUP BY project_id, agent`)
+		FROM sessions WHERE deleted = 0` + kindVisibilitySQL(includeHidden) + ` GROUP BY project_id, agent`)
 	if err != nil {
 		return nil, err
 	}
@@ -918,10 +930,16 @@ func (s *Store) Search(query, projectID string) ([]Session, error) {
 // connection. Snippets are deliberately fetched separately for only the visible rows:
 // FTS5 snippet generation over hundreds of full transcripts dominates broad searches.
 func (s *Store) SearchContext(ctx context.Context, query, projectID string) ([]Session, error) {
+	return s.SearchContextVisibility(ctx, query, projectID, false)
+}
+
+// SearchContextVisibility optionally includes live background sessions. Default search remains
+// interactive-only; callers must explicitly opt in for a visibly marked show-hidden mode.
+func (s *Store) SearchContextVisibility(ctx context.Context, query, projectID string, includeHidden bool) ([]Session, error) {
 	q := `SELECT ` + prefixed("s", sessionColumns) + `
 		FROM sessions_fts
 		JOIN sessions s ON s.agent = sessions_fts.agent AND s.session_id = sessions_fts.session_id
-		WHERE sessions_fts MATCH ? AND s.deleted = 0 AND (s.kind = '' OR s.kind = 'interactive')`
+		WHERE sessions_fts MATCH ? AND s.deleted = 0` + prefixedKindVisibilitySQL("s", includeHidden)
 	args := []any{query}
 	if projectID != "" {
 		q += ` AND s.project_id = ?`
@@ -941,6 +959,20 @@ func (s *Store) SearchContext(ctx context.Context, query, projectID string) ([]S
 	defer func() { _ = rows.Close() }()
 
 	return scanSessions(rows)
+}
+
+func kindVisibilitySQL(includeHidden bool) string {
+	return prefixedKindVisibilitySQL("", includeHidden)
+}
+
+func prefixedKindVisibilitySQL(alias string, includeHidden bool) string {
+	if includeHidden {
+		return ""
+	}
+	if alias != "" {
+		alias += "."
+	}
+	return ` AND (` + alias + `kind = '' OR ` + alias + `kind = 'interactive')`
 }
 
 // Snippets returns highlighted match snippets for the provided sessions. The result is

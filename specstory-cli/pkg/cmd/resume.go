@@ -54,8 +54,9 @@ type resumePlan struct {
 	// local index. It has no local native file, so resume always fetches its SessionData from the
 	// cloud and reconstructs — even into the same agent. projectID is the cloud project to fetch
 	// from (the source session's project_id).
-	fromCloud bool
-	projectID string
+	fromCloud  bool
+	projectID  string
+	newSession bool // launch Codex without a resume id in fromCwd
 
 	// via records how the session was chosen, so EventResumeActivated can attribute the resume to
 	// its entry point: "picker" (the `resume` TUI), "search" (the `search` TUI's `r` action), or
@@ -179,7 +180,7 @@ Resuming SpecStory Cloud sessions (from your other machines) requires an active 
 				pinned = resolved
 			}
 
-			plan, err := selectResumeViaTUI(registry, store, projectID, projectName, presetTarget, builtFresh, pinned, localOnly)
+			plan, err := selectResumeViaTUI(registry, store, projectID, projectName, cwd, presetTarget, builtFresh, pinned, localOnly)
 			if err != nil {
 				return err
 			}
@@ -259,6 +260,9 @@ func resumeLaunchCwd(plan *resumePlan, currentCwd string) string {
 // launchResume reconstructs (cross-agent) or natively resumes the planned session and
 // runs the agent with auto-save + provenance — the shared tail of `resume` and `search`.
 func launchResume(plan *resumePlan, cwd string, o resumeLaunchOpts) error {
+	if plan != nil && plan.newSession {
+		return launchNewCodexSession(plan, cwd)
+	}
 	if o.localOnly {
 		return launchLocalResume(plan, cwd)
 	}
@@ -342,6 +346,20 @@ func launchResume(plan *resumePlan, cwd string, o resumeLaunchOpts) error {
 	if err := plan.to.ExecAgentAndWatch(launchCwd, "", resumeSessionID, o.debugRaw, sessionCallback); err != nil {
 		slog.Error("Agent resume failed", "provider", plan.to.Name(), "error", err)
 		return err
+	}
+	return nil
+}
+
+func launchNewCodexSession(plan *resumePlan, currentCwd string) error {
+	if plan == nil || plan.to == nil || plan.toID != "codex" {
+		return errors.New("new Codex session plan is incomplete")
+	}
+	launchCwd := resumeLaunchCwd(plan, currentCwd)
+	if _, ok := usableProjectCwd(launchCwd); !ok {
+		return fmt.Errorf("cannot start Codex: project directory %q is missing or unavailable", launchCwd)
+	}
+	if err := plan.to.ExecAgentAndWatch(launchCwd, "", "", false, func(*spi.AgentChatSession) {}); err != nil {
+		return fmt.Errorf("start Codex session: %w", err)
 	}
 	return nil
 }

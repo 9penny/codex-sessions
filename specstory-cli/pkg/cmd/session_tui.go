@@ -4,7 +4,9 @@ import (
 	"context"
 	"image/color"
 	"log/slog"
+	"os"
 	"sort"
+	"strings"
 
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
@@ -19,9 +21,11 @@ import (
 // sessionTUIResult is what the picker hands back: the chosen session and target agent,
 // or a cancel. It is read off the final model after the program exits.
 type sessionTUIResult struct {
-	session   *sessionindex.Session
-	targetID  string
-	cancelled bool
+	session    *sessionindex.Session
+	targetID   string
+	newSession bool
+	newCwd     string
+	cancelled  bool
 }
 
 // tuiMode is the picker's top-level screen.
@@ -88,6 +92,7 @@ type sessionTUI struct {
 	// can drill into other projects via the browser and toggle back to "home" with tab.
 	homeProjectID   string
 	homeProjectName string
+	homeCwd         string
 	homeSessions    []sessionindex.Session
 
 	all              []sessionindex.Session // sessions for the active project (projectID), newest first
@@ -101,6 +106,7 @@ type sessionTUI struct {
 	agentCycle  []string // "" (all) followed by each present agent id
 	agentFilter string   // "" = all
 	viewMode    string   // "dense" | "sparse"
+	showHidden  bool     // explicit, process-lifetime visibility for background sessions
 
 	// all-projects browser (Stage B)
 	projects         []sessionindex.ProjectSummary // all projects, most recent first
@@ -226,6 +232,7 @@ type sessionTUIOpts struct {
 	initialQuery  string // search: pre-seed the all-projects query
 	startInSearch bool   // search: open in the all-projects FTS with the input focused
 	localOnly     bool   // disable every inherited cloud command and device lookup
+	homeCwd       string // current project cwd; supports `n` before any session exists
 
 	// pinnedSession is a session resolved by `resume --session <uri>` (no preset agent). When
 	// set, the TUI opens straight at the target picker (modeTarget) with this session pinned as
@@ -253,6 +260,7 @@ func newSessionTUI(store *sessionindex.Store, registry *factory.Registry, projec
 		projectName:     projectName,
 		homeProjectID:   projectID,
 		homeProjectName: projectName,
+		homeCwd:         opts.homeCwd,
 		homeSessions:    sessions,
 		agents:          agents,
 		agentColW:       agentColWidth(agents),
@@ -427,7 +435,7 @@ func (m sessionTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // cursor by session id), or re-runs a settled cross-project search to fold in the fresh rows.
 // In any other view it just caches the refreshed sessions for when the user returns home.
 func (m sessionTUI) refreshAfterWarm() (tea.Model, tea.Cmd) {
-	sessions, err := m.store.ListByProject(m.homeProjectID)
+	sessions, err := m.store.ListByProjectVisibility(m.homeProjectID, m.showHidden)
 	if err != nil {
 		slog.Debug("resume: refresh after warm failed", "error", err)
 		return m, nil
@@ -508,15 +516,18 @@ func (m sessionTUI) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.cursor = len(m.filtered) - 1
 		m.clampScroll()
 		return m, m.requestVisibleSnippets(modeList)
-	case "r":
-		// Resume the highlighted session. Enter is NOT a resume trigger (a stray return
-		// shouldn't launch an agent); it previews, aliased to space below.
+	case "r", "enter":
+		// Resume the highlighted session. In local-only mode beginResume chooses the native
+		// Codex target directly; inherited multi-agent mode still opens its target picker.
 		if sel := m.selected(); sel != nil {
 			return m.beginResume(sel)
 		}
-	// Enter is silently aliased to space so either key previews (the hint only advertises
-	// space). 'r' remains the sole resume trigger.
-	case " ", "space", "enter":
+	case "n":
+		if sel := m.selected(); sel != nil {
+			return m.beginNewSession(sel.OriginCwd)
+		}
+		return m.beginNewSession(m.activeProjectCwd())
+	case " ", "space":
 		if sel := m.selected(); sel != nil {
 			return m.openPreview(sel)
 		}
@@ -526,6 +537,8 @@ func (m sessionTUI) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.search.Focus()
 	case "a":
 		return m, m.cycleAgent()
+	case "h":
+		return m, m.toggleHiddenVisibility()
 	case "m":
 		return m, m.cycleMachine()
 	case "v":
@@ -639,7 +652,7 @@ func (m sessionTUI) refreshAfterDelete(pd pendingDelete) (tea.Model, tea.Cmd) {
 	default: // deleteFromList
 		// Re-query the active project (home or drilled-in) and rebuild. The cursor keeps its
 		// index (clamped), so the next session slides up under it.
-		sessions, err := m.store.ListByProject(m.projectID)
+		sessions, err := m.store.ListByProjectVisibility(m.projectID, m.showHidden)
 		if err != nil {
 			slog.Debug("resume: refresh after delete failed", "error", err)
 			return m, nil
@@ -970,11 +983,46 @@ func (m *sessionTUI) toggleViewMode() {
 // refilterCurrentAgent, which reuses searchRaw and avoids a second query.
 func (m *sessionTUI) applyFilter() {
 	if queryReady(m.searchQuery) {
-		m.searchRaw, _ = m.store.Search(ftsQuery(m.searchQuery), m.projectID)
+		m.searchRaw, _ = m.store.SearchContextVisibility(context.Background(), ftsQuery(m.searchQuery), m.projectID, m.showHidden)
 	} else {
 		m.searchRaw = nil
 	}
 	m.refilterCurrentAgent()
+}
+
+func (m *sessionTUI) toggleHiddenVisibility() tea.Cmd {
+	m.showHidden = !m.showHidden
+	m.statusMsg = ""
+	m.searchSeq++
+	m.snippetSeq++
+	if m.store == nil {
+		m.refilterCurrentAgent()
+		return nil
+	}
+	if m.mode == modeProjects {
+		m.projectsLoaded = false
+		m.enterBrowser()
+		if m.globalActive && queryReady(m.globalQuery) {
+			m.globalLocal, _ = m.store.SearchContextVisibility(context.Background(), ftsQuery(m.globalQuery), m.globalScopeID, m.showHidden)
+			m.globalSnippets = map[string]string{}
+			m.rebuildGlobalResults()
+			return m.requestVisibleSnippets(modeProjects)
+		}
+		return nil
+	}
+	sessions, err := m.store.ListByProjectVisibility(m.projectID, m.showHidden)
+	if err != nil {
+		m.statusMsg = "Could not change hidden-session visibility"
+		m.showHidden = !m.showHidden
+		return nil
+	}
+	m.all = sessions
+	if m.projectID == m.homeProjectID {
+		m.homeSessions = sessions
+	}
+	m.rebuildAgentCycle()
+	m.applyFilter()
+	return m.requestVisibleSnippets(modeList)
 }
 
 // refilterCurrentAgent re-derives the visible list for the current agent filter WITHOUT a new
@@ -1035,12 +1083,54 @@ func (m *sessionTUI) refilterCurrentAgent() {
 // pre-selected via `resume <agent>`, that choice is honored immediately and the picker exits
 // — the user is never asked to pick a target. Otherwise it moves to the target-selection step.
 func (m sessionTUI) beginResume(sess *sessionindex.Session) (tea.Model, tea.Cmd) {
+	if m.localOnly {
+		if cwd, ok := usableProjectCwd(sess.OriginCwd); !ok {
+			m.statusMsg = "Cannot resume — the recorded project directory is missing or unavailable"
+			return m, nil
+		} else {
+			sess.OriginCwd = cwd
+		}
+		m.chosen = sess
+		m.result = sessionTUIResult{session: sess, targetID: sess.Agent}
+		return m, tea.Quit
+	}
 	m.chosen = sess
 	if m.presetTo != "" {
 		m.result = sessionTUIResult{session: sess, targetID: m.presetTo}
 		return m, tea.Quit
 	}
 	return m.enterTargetPicker(sess), nil
+}
+
+func (m sessionTUI) beginNewSession(cwd string) (tea.Model, tea.Cmd) {
+	resolved, ok := usableProjectCwd(cwd)
+	if !ok {
+		m.statusMsg = "Cannot start Codex — the recorded project directory is missing or unavailable"
+		return m, nil
+	}
+	m.result = sessionTUIResult{newSession: true, newCwd: resolved, targetID: "codex"}
+	return m, tea.Quit
+}
+
+func (m sessionTUI) activeProjectCwd() string {
+	for _, sess := range m.all {
+		if cwd, ok := usableProjectCwd(sess.OriginCwd); ok {
+			return cwd
+		}
+	}
+	if m.projectID == m.homeProjectID {
+		return m.homeCwd
+	}
+	return ""
+}
+
+func usableProjectCwd(cwd string) (string, bool) {
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" {
+		return "", false
+	}
+	info, err := os.Stat(cwd)
+	return cwd, err == nil && info.IsDir()
 }
 
 // enterTargetPicker pins sess as the chosen session and opens the target-selection step, with
