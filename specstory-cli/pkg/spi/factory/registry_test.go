@@ -3,20 +3,31 @@ package factory
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/specstoryai/getspecstory/specstory-cli/pkg/providers/copilotide"
 	"github.com/specstoryai/getspecstory/specstory-cli/pkg/spi"
 )
 
-// TestRegisterAll_VariantRegistersViaUserDataDirOverride guards the startup
-// ordering that --user-data-dir depends on: Copilot IDE variants are only
-// registered when their storage holds at least one chat, so overrides must be
-// in effect before registerAll runs (main() pre-parses the flag for exactly
-// this reason — cobra's RunE fires only after the registry has initialized).
-// With an override pointing at a fake VSCodium install containing a chat
-// session, a fresh registry must register the copilotide-vscodium provider.
-func TestRegisterAll_VariantRegistersViaUserDataDirOverride(t *testing.T) {
+func TestActiveRegistryExposesOnlyCodex(t *testing.T) {
+	r := &Registry{providers: make(map[string]spi.Provider)}
+	r.registerAll()
+
+	want := []string{"codex"}
+	if got := r.ListIDsUnsafe(); !slices.Equal(got, want) {
+		t.Fatalf("active provider IDs = %v, want %v", got, want)
+	}
+	if _, err := r.Get("claude"); err == nil {
+		t.Fatal("archived Claude provider remains reachable")
+	}
+	if provider, err := r.Get("codex"); err != nil || provider == nil {
+		t.Fatalf("Codex provider unavailable: provider=%v err=%v", provider, err)
+	}
+}
+
+// Archived provider storage must not affect the active Codex-only registry.
+func TestArchivedVariantIsNotRegisteredViaUserDataDirOverride(t *testing.T) {
 	variant := copilotide.VSCodium
 
 	// If the host has a real install with chats, the variant registers with or
@@ -41,8 +52,8 @@ func TestRegisterAll_VariantRegistersViaUserDataDirOverride(t *testing.T) {
 	r := &Registry{providers: make(map[string]spi.Provider)}
 	r.registerAll()
 
-	if _, ok := r.providers[variant.ID]; !ok {
-		t.Errorf("variant %q not registered with a valid --user-data-dir override; registered providers: %v",
+	if _, ok := r.providers[variant.ID]; ok {
+		t.Errorf("archived variant %q was registered through a user-data-dir override; registered providers: %v",
 			variant.ID, r.ListIDsUnsafe())
 	}
 }

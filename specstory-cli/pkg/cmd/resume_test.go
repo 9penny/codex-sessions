@@ -418,19 +418,16 @@ func (f *fakeProvider) WatchAgent(context.Context, string, bool, func(*spi.Agent
 }
 func (f *fakeProvider) ListAllAgentChatSessions() ([]spi.GlobalSessionRef, error) { return nil, nil }
 
-// TestSupportsReconstruction pins the capability answers of the real registry:
-// Antigravity is a provider with no native serializer, so it is the one
-// invalid reconstruction target.
-func TestSupportsReconstruction(t *testing.T) {
+// TestActiveRegistrySupportsCodexReconstruction pins the capability used by the
+// local resume path without making archived providers reachable again.
+func TestActiveRegistrySupportsCodexReconstruction(t *testing.T) {
 	registry := factory.GetRegistry()
-	for id, want := range map[string]bool{"claude": true, "codex": true, "antigravity": false} {
-		prov, err := registry.Get(id)
-		if err != nil {
-			t.Fatalf("registry.Get(%q): %v", id, err)
-		}
-		if got := prov.SupportsReconstruction(); got != want {
-			t.Errorf("%s.SupportsReconstruction() = %v, want %v", id, got, want)
-		}
+	prov, err := registry.Get("codex")
+	if err != nil {
+		t.Fatalf("registry.Get(codex): %v", err)
+	}
+	if !prov.SupportsReconstruction() {
+		t.Error("codex.SupportsReconstruction() = false, want true")
 	}
 }
 

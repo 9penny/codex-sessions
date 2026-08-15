@@ -315,6 +315,27 @@ func newSessionTUI(store *sessionindex.Store, registry *factory.Registry, projec
 	return m
 }
 
+func (m sessionTUI) listProjectSessions(projectID string) ([]sessionindex.Session, error) {
+	if m.localOnly {
+		return m.store.ListByProjectForAgentVisibility(projectID, "codex", m.showHidden)
+	}
+	return m.store.ListByProjectVisibility(projectID, m.showHidden)
+}
+
+func (m sessionTUI) listProjects() ([]sessionindex.ProjectSummary, error) {
+	if m.localOnly {
+		return m.store.ListProjectsForAgentVisibility("codex", m.showHidden)
+	}
+	return m.store.ListProjectsVisibility(m.showHidden)
+}
+
+func (m sessionTUI) searchSessions(ctx context.Context, query, projectID string) ([]sessionindex.Session, error) {
+	if m.localOnly {
+		return m.store.SearchContextForAgentVisibility(ctx, query, projectID, "codex", m.showHidden)
+	}
+	return m.store.SearchContextVisibility(ctx, query, projectID, m.showHidden)
+}
+
 func (m sessionTUI) Init() tea.Cmd {
 	// Kick the async cloud-eligibility check once on open (off the UI thread). When it resolves,
 	// Update either starts the first cloud fetch (eligible) or sets the footer nudge.
@@ -435,7 +456,7 @@ func (m sessionTUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // cursor by session id), or re-runs a settled cross-project search to fold in the fresh rows.
 // In any other view it just caches the refreshed sessions for when the user returns home.
 func (m sessionTUI) refreshAfterWarm() (tea.Model, tea.Cmd) {
-	sessions, err := m.store.ListByProjectVisibility(m.homeProjectID, m.showHidden)
+	sessions, err := m.listProjectSessions(m.homeProjectID)
 	if err != nil {
 		slog.Debug("resume: refresh after warm failed", "error", err)
 		return m, nil
@@ -652,7 +673,7 @@ func (m sessionTUI) refreshAfterDelete(pd pendingDelete) (tea.Model, tea.Cmd) {
 	default: // deleteFromList
 		// Re-query the active project (home or drilled-in) and rebuild. The cursor keeps its
 		// index (clamped), so the next session slides up under it.
-		sessions, err := m.store.ListByProjectVisibility(m.projectID, m.showHidden)
+		sessions, err := m.listProjectSessions(m.projectID)
 		if err != nil {
 			slog.Debug("resume: refresh after delete failed", "error", err)
 			return m, nil
@@ -983,7 +1004,7 @@ func (m *sessionTUI) toggleViewMode() {
 // refilterCurrentAgent, which reuses searchRaw and avoids a second query.
 func (m *sessionTUI) applyFilter() {
 	if queryReady(m.searchQuery) {
-		m.searchRaw, _ = m.store.SearchContextVisibility(context.Background(), ftsQuery(m.searchQuery), m.projectID, m.showHidden)
+		m.searchRaw, _ = m.searchSessions(context.Background(), ftsQuery(m.searchQuery), m.projectID)
 	} else {
 		m.searchRaw = nil
 	}
@@ -1003,14 +1024,14 @@ func (m *sessionTUI) toggleHiddenVisibility() tea.Cmd {
 		m.projectsLoaded = false
 		m.enterBrowser()
 		if m.globalActive && queryReady(m.globalQuery) {
-			m.globalLocal, _ = m.store.SearchContextVisibility(context.Background(), ftsQuery(m.globalQuery), m.globalScopeID, m.showHidden)
+			m.globalLocal, _ = m.searchSessions(context.Background(), ftsQuery(m.globalQuery), m.globalScopeID)
 			m.globalSnippets = map[string]string{}
 			m.rebuildGlobalResults()
 			return m.requestVisibleSnippets(modeProjects)
 		}
 		return nil
 	}
-	sessions, err := m.store.ListByProjectVisibility(m.projectID, m.showHidden)
+	sessions, err := m.listProjectSessions(m.projectID)
 	if err != nil {
 		m.statusMsg = "Could not change hidden-session visibility"
 		m.showHidden = !m.showHidden

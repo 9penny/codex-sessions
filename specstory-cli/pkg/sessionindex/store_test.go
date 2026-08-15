@@ -152,6 +152,25 @@ func TestVisibilityQueriesCanExplicitlyIncludeBackgroundSessions(t *testing.T) {
 	}
 }
 
+func TestAgentScopedQueriesExcludeArchivedProviderRows(t *testing.T) {
+	s := openTemp(t)
+	mustUpsert(t, s, newSession("codex", "active", "proj-a", "Codex", "shared marker"))
+	mustUpsert(t, s, newSession("claude", "archived", "proj-a", "Claude", "shared marker"))
+
+	listed, err := s.ListByProjectForAgentVisibility("proj-a", "codex", true)
+	if err != nil || len(listed) != 1 || listed[0].Agent != "codex" {
+		t.Fatalf("agent-scoped list = %+v, %v; want only codex", listed, err)
+	}
+	projects, err := s.ListProjectsForAgentVisibility("codex", true)
+	if err != nil || len(projects) != 1 || projects[0].Sessions != 1 {
+		t.Fatalf("agent-scoped projects = %+v, %v; want one Codex session", projects, err)
+	}
+	hits, err := s.SearchContextForAgentVisibility(context.Background(), "shared", "", "codex", true)
+	if err != nil || len(hits) != 1 || hits[0].Agent != "codex" {
+		t.Fatalf("agent-scoped search = %+v, %v; want only codex", hits, err)
+	}
+}
+
 func TestSearchFTS(t *testing.T) {
 	s := openTemp(t)
 	mustUpsert(t, s, newSession("claude", "c1", "proj-a", "Auth refactor", "rewrote the login flow with oauth"))

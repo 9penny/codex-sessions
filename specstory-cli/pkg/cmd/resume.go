@@ -193,10 +193,12 @@ Resuming SpecStory Cloud sessions (from your other machines) requires an active 
 		},
 	}
 	if localOnly {
+		resumeCmd.Use = "resume"
 		resumeCmd.Short = "Resume a local Codex CLI session"
 		resumeCmd.Long = `Resume a local Codex CLI session from the derived index.
 
 'resume' opens the Codex Sessions picker. The native Codex JSONL remains authoritative, and the Codex process starts in the session's recorded project directory.`
+		resumeCmd.Args = cobra.NoArgs
 	}
 
 	if !localOnly {

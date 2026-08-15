@@ -1,186 +1,92 @@
 # Codex Sessions
 
-> [!IMPORTANT]
-> This repository is an early, personal-first fork of SpecStory focused exclusively on safe local Codex CLI session browsing over Linux, WSL, and SSH. The application is not ready for daily use yet. Until the `v0.1` safety milestone is complete, the inherited index may persist unredacted session content.
+Codex Sessions is a local-only terminal browser for Codex CLI history. It indexes the native
+`~/.codex/sessions` JSONL files into a disposable, redacted SQLite database so you can browse,
+search, preview, resume, or start sessions without an account or cloud service.
 
-The confirmed scope and milestone plan are maintained in the separate [codex-session-management](https://github.com/9penny/codex-session-management) planning repository. The ordered development slices and release gates are recorded in the [v0.1 implementation plan](./specstory-cli/docs/V0.1-IMPLEMENTATION-PLAN.md). The intended command name is `csessions`; inherited SpecStory names and multi-agent/cloud features will be removed or disabled incrementally.
+> This is a personal-first open-source fork under active development. The `dev` branch is the
+> integration branch; `v0.1.0` has not been tagged yet.
 
-## Upstream
+## Safety model
 
-Codex Sessions is forked from [SpecStory](https://github.com/specstoryai/getspecstory) and retains its Apache-2.0 license and history. Upstream documentation follows below for reference during the bootstrap phase.
+- Native Codex JSONL files are authoritative and are never modified.
+- The SQLite index contains redacted user/assistant text only. Reasoning, tool arguments, and
+  tool output are excluded.
+- Preview reads native JSONL on demand, masks secrets by default, and never caches raw text.
+- Uppercase `R` reveals only the current preview in process memory; navigating away clears it.
+- v0.1 has no login, sync, analytics, telemetry, version check, or other outbound path.
+- Background `subagent`, `exec`, and unknown-source sessions are hidden by default.
 
----
+## Requirements and build
 
-<img width="1649" height="158" alt="Group 6 (1)" src="https://github.com/user-attachments/assets/93f0210f-c3ce-4035-91df-ec597e00a3ce" />
-
-
-# Intent is the new source code
-
-**Turn your AI development conversations into searchable, shareable knowledge.**
-
-Never lose a brilliant solution, code snippet, or architectural decision again. SpecStory captures, indexes, and makes searchable every interaction you have with AI coding assistants across all your projects and tools.
-
-<p align="left">
-  <strong>Install SpecStory ──▶ </strong>&nbsp;
-  <a href="https://specstory.com"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fspecstory.com%2Fapi%2Fbadge%3Fstat%3Dinstalls&style=flat-square" alt="Installs" style="vertical-align: middle;"></a>
-  <a href="https://specstory.com"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fspecstory.com%2Fapi%2Fbadge%3Fstat%3DactiveUsers&style=flat-square" alt="Active Users" style="vertical-align: middle;"></a>
-  <a href="https://specstory.com"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fspecstory.com%2Fapi%2Fbadge%3Fstat%3DsessionsSaved&style=flat-square" alt="Sessions Saved" style="vertical-align: middle;"></a>
-  <a href="https://specstory.com"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fspecstory.com%2Fapi%2Fbadge%3Fstat%3DrulesGenerated&style=flat-square" alt="Rules Generated" style="vertical-align: middle;"></a>
-</p>
-
-<p align="left">
-  <strong>Contribute to OSS ──▶</strong>&nbsp;
-  <a href="https://github.com/specstoryai/getspecstory/tree/main/specstory-cli"><img src="https://img.shields.io/badge/CLI-Open%20Source-brightgreen?style=flat-square" alt="CLI Open Source" style="vertical-align: middle;"></a>
-  <a href="./lore"><img src="https://img.shields.io/badge/Lore-Forge%20Skills-brightgreen?style=flat-square" alt="Lore: forge skills from your sessions" style="vertical-align: middle;"></a>
-</p>
-
-<p align="left">
-  <strong>Connect with us ───▶</strong>&nbsp;
-  <a href="https://twitter.com/specstoryai"><img src="https://img.shields.io/badge/X-000000?style=flat-square&logoColor=white" alt="X" style="vertical-align: middle;"></a>
-  <a href="https://www.linkedin.com/company/specstory"><img src="https://img.shields.io/badge/LinkedIn-0077B5?style=flat-square&logo=linkedin&logoColor=white" alt="LinkedIn" style="vertical-align: middle;"></a>
-  <a href="https://specstory.slack.com/join/shared_invite/zt-2vq0274ck-MYS39rgOpDSmgfE1IeK9gg#/shared-invite/email"><img src="https://img.shields.io/badge/Slack-4A154B?style=flat-square&logo=slack&logoColor=white" alt="Slack" style="vertical-align: middle;"></a>
-  <a href="https://discord.gg/E47yQyEUd3"><img src="https://img.shields.io/badge/Discord-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord" style="vertical-align: middle;"></a>
-  <a href="https://www.youtube.com/@specstory"><img src="https://img.shields.io/badge/YouTube-FF0000?style=flat-square&logo=youtube&logoColor=white" alt="YouTube" style="vertical-align: middle;"></a>
-</p>
-
-> 📜 **[Lore](./lore)** - Mine your saved sessions into evidence-backed agent skills, forged from how you actually work. Your sessions are your lore.
-
-## How It Works
-```
-AI Coding Tools              Local First                  Cloud Platform
-─────────────────           ─────────────                ─────────────────
-                                                          (Login Required)
-Cursor IDE         ┐
-Copilot IDE        │
-Claude Code CLI    │
-Cursor CLI         │
-Codex CLI          ├──────►  .specstory/history/  ──────►  cloud.specstory.com
-Droid CLI          │          (Auto-Saved Locally)        (Search, Ask & Share)
-Gemini CLI         │
-DeepSeek TUI       │
-Antigravity CLI    ┘
-```
-
-## Workflow
-
-1. **Capture** - Extensions save every AI interaction locally to `.specstory/history/`
-2. **Process** - Run [`/lore`](./lore) to mine your history into reusable, evidence-backed agent skills
-3. **Sync (Optional)** - Only if logged in, sessions sync to cloud
-4. **Search** - Find conversations locally or across all projects in cloud
-5. **Share** - Export and share specific solutions with your team
-
-## Supported Development Tools
-
-SpecStory integrates seamlessly with your favorite AI coding tools, automatically saving all conversations locally to `.specstory/history/` in your project. **Everything is local-first** - your data stays on your machine unless you choose to sync to the cloud.
-
-### Installation
-
-| Product                                                          | Type | Source                                                                                               | Supported Agent                                                               | Min Version  | Installation                                                  | Changelog                                                                                  |
-|------------------------------------------------------------------|------|------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------|--------------|---------------------------------------------------------------|--------------------------------------------------------------------------------------------|
-| **[Cursor Extension](https://www.cursor.com/)**                  | IDE  | Closed                                                                                               | [Cursor AI](https://www.cursor.com/)                                          | v0.43.6+     | Search "SpecStory" in Extensions (Cmd/Ctrl+Shift+X) → Install | [📋 View](https://marketplace.visualstudio.com/items/SpecStory.specstory-vscode/changelog) |
-| **[VSC Copilot Extension](https://github.com/features/copilot)** | IDE  | Closed                                                                                               | [GitHub Copilot](https://github.com/features/copilot)                         | v1.300.0+    | Search "SpecStory" in Extensions (Cmd/Ctrl+Shift+X) → Install | [📋 View](https://marketplace.visualstudio.com/items/SpecStory.specstory-vscode/changelog) |
-| **[SpecStory CLI](https://specstory.com/specstory-cli)**         | CLI  | [Open](https://github.com/specstoryai/getspecstory/tree/dev/specstory-cli/pkg/providers/claudecode)  | [Claude Code](https://claude.ai/claude-code)                                  | v1.0.27+     | `brew tap specstoryai/tap`<br/>`brew install specstory`       | [📋 View](https://github.com/specstoryai/getspecstory/releases)                            |
-| **[SpecStory CLI](https://specstory.com/specstory-cli)**         | CLI  | [Open](https://github.com/specstoryai/getspecstory/tree/dev/specstory-cli/pkg/providers/codexcli)    | [Codex CLI](https://www.openai.com/codex)                                     | v0.42.0+     | `brew tap specstoryai/tap`<br/>`brew install specstory`       | [📋 View](https://github.com/specstoryai/getspecstory/releases)                            |
-| **[SpecStory CLI](https://specstory.com/specstory-cli)**         | CLI  | [Open](https://github.com/specstoryai/getspecstory/tree/dev/specstory-cli/pkg/providers/cursorcli)   | [Cursor CLI](https://cursor.com/cli)                                          | v2025.09.18+ | `brew tap specstoryai/tap`<br/>`brew install specstory`       | [📋 View](https://github.com/specstoryai/getspecstory/releases)                            |
-| **[SpecStory CLI](https://specstory.com/specstory-cli)**         | CLI  | [Open](https://github.com/specstoryai/getspecstory/tree/dev/specstory-cli/pkg/providers/droidcli)    | [Droid CLI](https://factory.ai/product/cli)                                   | v0.56.3+     | `brew tap specstoryai/tap`<br/>`brew install specstory`       | [📋 View](https://github.com/specstoryai/getspecstory/releases)                            |
-| **[SpecStory CLI](https://specstory.com/specstory-cli)**         | CLI  | [Open](https://github.com/specstoryai/getspecstory/tree/dev/specstory-cli/pkg/providers/geminicli)   | [Gemini CLI](https://docs.cloud.google.com/gemini/docs/codeassist/gemini-cli) | 0.15.1+      | `brew tap specstoryai/tap`<br/>`brew install specstory`       | [📋 View](https://github.com/specstoryai/getspecstory/releases)                            |
-| **[SpecStory CLI](https://specstory.com/specstory-cli)**         | CLI  | [Open](https://github.com/specstoryai/getspecstory/tree/dev/specstory-cli/pkg/providers/deepseektui) | [DeepSeek TUI](https://github.com/Hmbown/DeepSeek-TUI)                        | 0.8.39+      | `brew tap specstoryai/tap`<br/>`brew install specstory`       | [📋 View](https://github.com/specstoryai/getspecstory/releases)                            |
-| **[SpecStory CLI](https://specstory.com/specstory-cli)**         | CLI  | [Open](https://github.com/specstoryai/getspecstory/tree/dev/specstory-cli/pkg/providers/antigravitycli) | [Antigravity CLI](https://antigravity.google/)                             | v1.1.5+      | `brew tap specstoryai/tap`<br/>`brew install specstory`       | [📋 View](https://github.com/specstoryai/getspecstory/releases)                            |
-| **[Lore](./lore)** 📜                                            | Skill | [Open](./lore)                                                                                       | Any [Agent Skills](https://agentskills.io) | Node 22.5+   | `npx skills add specstoryai/getspecstory --skill lore`        | [📋 View](./lore/CHANGELOG.md)                                                             |
-
-> [!NOTE]
-> For Cursor users: Install from within Cursor, not from the Visual Studio Marketplace website. [Learn why](https://github.com/specstoryai/getspecstory/issues/8)
-
-### CLI Tools
-
-**One installation works with all CLI tools** - Claude Code, Cursor CLI, Codex, Droid, DeepSeek, and Antigravity:
+- Linux or WSL, including SSH terminals
+- Go 1.26.5
+- Codex CLI available as `codex`
 
 ```bash
-# Check which agents are installed
-specstory check
-
-# Launch your preferred agent with auto-save
-specstory run claude       # Launch Claude Code
-specstory run cursor       # Launch Cursor CLI
-specstory run codex        # Launch Codex CLI
-specstory run droid        # Launch Droid CLI
-specstory run gemini       # Launch Gemini CLI
-specstory run deepseek     # Launch DeepSeek TUI
-specstory run antigravity  # Launch Antigravity CLI
-specstory run           # Launch default agent
+git clone https://github.com/9penny/codex-sessions.git
+cd codex-sessions/specstory-cli
+go build -o bin/csessions .
+./bin/csessions version
 ```
 
-All sessions automatically save to `.specstory/history/` in your current project.
+## Usage
 
-> [!TIP]
-> The SpecStory CLI acts as a wrapper that enhances any of these terminal agents with automatic session saving. You only need the respective agent installed (e.g., Claude Code) for SpecStory to work with it.
+```bash
+# Browse the current project, preview, resume, or start a new session
+csessions resume
 
-## Lore 📜
+# Search all indexed projects; Chinese and English text are supported
+csessions search "query"
 
-[**Lore**](./lore) turns the sessions SpecStory saves into agent skills forged from how you actually work. Your sessions are your lore.
+# Incrementally rebuild the disposable index
+csessions reindex
 
-### The Problem We Solve
-- **Repeated Yourself Again**: You re-explain the same workflows, conventions, and fixes to your agent every session
-- **Skills From Guesswork**: Hand-written agent skills describe how you think you work, not how you demonstrably do
-
-### The Solution
-Lore mines your `.specstory/history` into evidence - what you actually ran, what worked, and the judgment you apply without noticing - and forges the skills you approve into every agent on your machine.
-
-Install:
-
-```sh
-npx skills add specstoryai/getspecstory --skill lore
+# Reparse every native Codex session
+csessions reindex --force
 ```
 
-Then invoke it - `/lore` in Claude Code, `$lore` in Codex, or just ask ("mine my lore") in Gemini CLI and others:
+Core TUI keys:
 
+- `enter` or `r`: resume the selected session in its recorded directory
+- `n`: start a new Codex session in the selected project directory
+- `space`: open masked preview; `R` temporarily reveals it
+- `/`: search; `h`: show or hide background sessions
+- `q` or `esc`: quit or go back
+
+If a recorded directory is missing, launch is blocked with an explanation instead of silently
+using a different directory.
+
+## Local storage
+
+Codex Sessions respects the XDG base-directory variables:
+
+| Purpose | Default path |
+|---|---|
+| Configuration | `~/.config/csessions/` |
+| Derived index | `~/.local/share/csessions/sessions.db` |
+| Disposable cache | `~/.cache/csessions/` |
+
+Deleting the derived database is safe; `csessions reindex` rebuilds it from native JSONL.
+
+## Development
+
+The ordered work and release gates are in the
+[v0.1 implementation plan](specstory-cli/docs/V0.1-IMPLEMENTATION-PLAN.md). Run the standard
+gate from `specstory-cli/`:
+
+```bash
+gofmt -w .
+go vet ./...
+go test ./...
+go build -o bin/csessions .
 ```
-/lore
-```
 
-[Get Started with Lore →](./lore)
+The fork intentionally keeps inherited non-Codex source at its original paths as unsupported
+reference material. It is not registered or reachable from `csessions`; see the
+[archive inventory](specstory-cli/docs/ARCHIVED-UPSTREAM.md).
 
-## SpecStory Cloud ☁️
+## License and upstream
 
-[**SpecStory Cloud**](https://cloud.specstory.com) transforms your local AI conversations into a powerful, centralized knowledge system.
-
-### The Problem We Solve
-- **Lost Context**: Critical decisions and solutions scattered across machines and projects
-- **No Global Search**: Finding that perfect solution from last month is impossible
-- **Fragile Sharing**: Passing around Markdown files doesn't scale
-
-### The Solution
-SpecStory Cloud creates your personal AI coding knowledge base:
-- 🔍 **Search Everywhere**: Full-text search across all your projects via web interface. RAG coming soon.
-- 🎯 **Explicit Opt-In**: Nothing syncs to cloud without sign-up and login first
-- 📚 **Organized by Project**: Automatic categorization by repository and time
-- 🚀 **API Access**: Programmatic sync and search for automation
-- 👥 **Team Features**: Coming soon - share knowledge across your organization
-
-[Get Started with SpecStory Cloud →](https://cloud.specstory.com)
-
-### How to Sync to Cloud
-
-| Method               | One-Time Setup                                               | Live Sessions                                          | Past Sessions                                        |
-|----------------------|--------------------------------------------------------------|--------------------------------------------------------|------------------------------------------------------|
-| **SpecStory CLI**    | `specstory login`                                            | Auto-pushed when using `specstory run` while logged in | Use `specstory sync` to push existing local sessions |
-| **Cursor Extension** | Command Palette → "SpecStory: Open Cloud Sync Configuration" | Configure auto-sync in settings                        | Use sync command from Command Palette                |
-| **VSCode Extension** | Command Palette → "SpecStory: Open Cloud Sync Configuration" | Configure auto-sync in settings                        | Use sync command from Command Palette                |
-
-> [!IMPORTANT]
-> **Local-First & Private by Default**: All sessions are saved locally to `.specstory/history/`. Nothing is ever sent to the cloud unless you explicitly login with. Even after logging in, you can control what gets synced.
-
-## Documentation & Support
-
-- 📚 **[Full Documentation](https://docs.specstory.com/overview)** - Complete guides and [Cloud API reference](https://docs.specstory.com/api-reference/introduction)
-- 📜 **[Lore](./lore)** - Forge your `.specstory/history` into installable agent skills, with evidence and outcomes
-- 🐛 **[Report Issues](https://github.com/specstoryai/getspecstory/issues)** - We actively monitor and respond
-- 📖 **[Contribute to Docs](https://github.com/specstoryai/docs/)** - PRs welcome!
-
-## Reviews & Feedback
-
-Love SpecStory? Help others discover their AI coding memory upgrade by leaving a [review](https://marketplace.visualstudio.com/items?itemName=SpecStory.specstory-vscode&ssr=false#review-details)! 🧠
-
-## Star History
-
-![Star History Chart](https://api.star-history.com/svg?repos=specstoryai/getspecstory&type=Date)
+Codex Sessions is forked from [SpecStory](https://github.com/specstoryai/getspecstory) and
+retains its Apache-2.0 license, attribution, and Git history. See [LICENSE.txt](LICENSE.txt).

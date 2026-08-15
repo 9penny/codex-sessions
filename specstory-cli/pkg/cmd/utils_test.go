@@ -48,57 +48,52 @@ func TestResolveProviderIDs(t *testing.T) {
 		// ── --providers flag: happy paths ────────────────────────────────────────
 		{
 			name:          "single valid provider",
-			providersFlag: []string{"claude"},
-			wantIDs:       []string{"claude"},
+			providersFlag: []string{"codex"},
+			wantIDs:       []string{"codex"},
 		},
 		{
-			name:          "multiple valid providers preserves order",
-			providersFlag: []string{"codex", "claude"},
-			wantIDs:       []string{"codex", "claude"},
+			name:          "multiple valid entries are deduplicated",
+			providersFlag: []string{"codex", "CODEX"},
+			wantIDs:       []string{"codex"},
 		},
 		{
 			name:          "mixed case is normalised to lower",
-			providersFlag: []string{"Claude", "CODEX"},
-			wantIDs:       []string{"claude", "codex"},
+			providersFlag: []string{"CODEX"},
+			wantIDs:       []string{"codex"},
 		},
 		{
 			name:          "leading and trailing whitespace is trimmed",
-			providersFlag: []string{"  claude  ", " codex"},
-			wantIDs:       []string{"claude", "codex"},
+			providersFlag: []string{"  codex  "},
+			wantIDs:       []string{"codex"},
 		},
 
 		// ── Deduplication ────────────────────────────────────────────────────────
 		{
 			name:          "exact duplicate is removed keeping first occurrence",
-			providersFlag: []string{"claude", "codex", "claude"},
-			wantIDs:       []string{"claude", "codex"},
+			providersFlag: []string{"codex", "codex"},
+			wantIDs:       []string{"codex"},
 		},
 		{
 			name:          "case-variant duplicate is removed after normalisation",
-			providersFlag: []string{"Claude", "claude"},
-			wantIDs:       []string{"claude"},
+			providersFlag: []string{"CODEX", "codex"},
+			wantIDs:       []string{"codex"},
 		},
 		{
 			name:          "whitespace-variant duplicate is removed after trimming",
-			providersFlag: []string{"claude", "  claude  "},
-			wantIDs:       []string{"claude"},
+			providersFlag: []string{"codex", "  codex  "},
+			wantIDs:       []string{"codex"},
 		},
 		{
 			name:          "all duplicates collapsed to single entry",
-			providersFlag: []string{"gemini", "GEMINI", "  gemini  "},
-			wantIDs:       []string{"gemini"},
-		},
-		{
-			name:          "three providers with one duplicate preserves remaining order",
-			providersFlag: []string{"cursor", "claude", "cursor", "codex"},
-			wantIDs:       []string{"cursor", "claude", "codex"},
+			providersFlag: []string{"codex", "CODEX", "  codex  "},
+			wantIDs:       []string{"codex"},
 		},
 
 		// ── Empty / blank entries ─────────────────────────────────────────────────
 		{
 			name:          "blank entries in flag slice are silently skipped",
-			providersFlag: []string{"", "  ", "claude"},
-			wantIDs:       []string{"claude"},
+			providersFlag: []string{"", "  ", "codex"},
+			wantIDs:       []string{"codex"},
 		},
 		{
 			name:          "only blank entries is an error",
@@ -114,7 +109,7 @@ func TestResolveProviderIDs(t *testing.T) {
 		},
 		{
 			name:          "unknown provider mixed with valid is still an error",
-			providersFlag: []string{"claude", "notaprovider"},
+			providersFlag: []string{"codex", "notaprovider"},
 			wantErrSubstr: "not a valid provider ID",
 		},
 	}
