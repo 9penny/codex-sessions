@@ -1,6 +1,4 @@
-// Package factory provides the provider registry and factory implementation.
-// This package imports all concrete provider implementations and manages
-// their registration, avoiding circular dependencies in the SPI layer.
+// Package factory provides the active Codex-only provider registry.
 package factory
 
 import (
@@ -10,21 +8,13 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/specstoryai/getspecstory/specstory-cli/pkg/providers/antigravitycli"
-	"github.com/specstoryai/getspecstory/specstory-cli/pkg/providers/claudecode"
 	"github.com/specstoryai/getspecstory/specstory-cli/pkg/providers/codexcli"
-	"github.com/specstoryai/getspecstory/specstory-cli/pkg/providers/copilotide"
-	"github.com/specstoryai/getspecstory/specstory-cli/pkg/providers/cursorcli"
-	"github.com/specstoryai/getspecstory/specstory-cli/pkg/providers/cursoride"
-	"github.com/specstoryai/getspecstory/specstory-cli/pkg/providers/deepseektui"
-	"github.com/specstoryai/getspecstory/specstory-cli/pkg/providers/droidcli"
-	"github.com/specstoryai/getspecstory/specstory-cli/pkg/providers/geminicli"
 	"github.com/specstoryai/getspecstory/specstory-cli/pkg/spi"
 )
 
 // Registry manages all registered providers
 type Registry struct {
-	providers         map[string]spi.Provider // key is the provider ID (e.g., "claude", "cursor")
+	providers         map[string]spi.Provider // key is the provider ID ("codex" in the active product)
 	mu                sync.RWMutex
 	initialized       bool
 	providerListCache string    // Cached formatted provider list string
@@ -46,8 +36,9 @@ func (r *Registry) ensureInitialized() {
 	})
 }
 
-// registerAll registers all known providers.
-// This is the ONLY place that needs to be updated when adding new providers.
+// registerAll registers the complete Codex Sessions product surface. Inherited provider
+// packages remain in the repository as an implementation archive but are intentionally not
+// imported or registered here.
 func (r *Registry) registerAll() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -59,62 +50,9 @@ func (r *Registry) registerAll() {
 
 	slog.Debug("Initializing provider registry")
 
-	// Register providers with simple IDs
-	// Each provider directly implements the spi.Provider interface
-	claudeProvider := claudecode.NewProvider()
-	r.providers["claude"] = claudeProvider
-	slog.Debug("Registered provider", "id", "claude", "name", claudeProvider.Name())
-
-	cursorProvider := cursorcli.NewProvider()
-	r.providers["cursor"] = cursorProvider
-	slog.Debug("Registered provider", "id", "cursor", "name", cursorProvider.Name())
-
 	codexProvider := codexcli.NewProvider()
 	r.providers["codex"] = codexProvider
 	slog.Debug("Registered provider", "id", "codex", "name", codexProvider.Name())
-
-	geminiProvider := geminicli.NewProvider()
-	r.providers["gemini"] = geminiProvider
-	slog.Debug("Registered provider", "id", "gemini", "name", geminiProvider.Name())
-
-	droidProvider := droidcli.NewProvider()
-	r.providers["droid"] = droidProvider
-	slog.Debug("Registered provider", "id", "droid", "name", droidProvider.Name())
-
-	cursorideProvider := cursoride.NewProvider()
-	r.providers[cursoride.ProviderID] = cursorideProvider
-	slog.Debug("Registered provider", "id", cursoride.ProviderID, "name", cursorideProvider.Name())
-
-	// The Copilot IDE provider is variant-driven: one instance per VS Code
-	// distribution, keyed by the variant's own ID so the registry key always
-	// matches the provider ID stamped into generated session data. Stock VS Code
-	// is always registered like every other provider; the alternative
-	// distributions register only when they hold at least one Copilot chat, so
-	// merely having Insiders or VSCodium installed doesn't add provider entries
-	// to watch banners, all-provider checks, and sync sweeps. The trade-off: a
-	// variant's very first Copilot chat must happen without SpecStory (nothing
-	// to watch exists until then).
-	copilotideProvider := copilotide.NewProvider(copilotide.VSCode)
-	r.providers[copilotide.VSCode.ID] = copilotideProvider
-	slog.Debug("Registered provider", "id", copilotide.VSCode.ID, "name", copilotideProvider.Name())
-
-	for _, variant := range []copilotide.Variant{copilotide.VSCodeInsiders, copilotide.VSCodium, copilotide.VSCodiumInsiders} {
-		if !copilotide.HasAnyChatSessions(variant) {
-			slog.Debug("Skipping Copilot IDE variant (no Copilot chats)", "id", variant.ID)
-			continue
-		}
-		variantProvider := copilotide.NewProvider(variant)
-		r.providers[variant.ID] = variantProvider
-		slog.Debug("Registered provider", "id", variant.ID, "name", variantProvider.Name())
-	}
-
-	deepseekProvider := deepseektui.NewProvider()
-	r.providers["deepseek"] = deepseekProvider
-	slog.Debug("Registered provider", "id", "deepseek", "name", deepseekProvider.Name())
-
-	antigravityProvider := antigravitycli.NewProvider()
-	r.providers["antigravity"] = antigravityProvider
-	slog.Debug("Registered provider", "id", "antigravity", "name", antigravityProvider.Name())
 
 	r.initialized = true
 	slog.Info("Provider registry initialized", "count", len(r.providers), "providers", r.ListIDsUnsafe())
@@ -194,11 +132,11 @@ func (r *Registry) ListIDs() []string {
 	return ids
 }
 
-// GetDefault returns the default provider (Claude)
+// GetDefault returns the sole supported provider.
 func (r *Registry) GetDefault() (spi.Provider, error) {
 	r.ensureInitialized()
-	slog.Debug("Getting default provider (claude)")
-	return r.Get("claude")
+	slog.Debug("Getting default provider (codex)")
+	return r.Get("codex")
 }
 
 // GetProviderList returns a formatted string listing all providers.

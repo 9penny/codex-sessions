@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -232,20 +233,46 @@ specstory watch`
 // createLocalCommandTree is the complete executable surface for Codex Sessions v0.1.
 // Inherited commands remain compiled and tested as reference code, but they are not registered.
 func createLocalCommandTree() *cobra.Command {
-	root := createRootCommand()
-	root.Use = "csessions [command]"
-	root.Short = "Browse, search, and resume local Codex CLI sessions"
-	root.Long = "Codex Sessions provides local search and resume access to Codex CLI sessions."
-	root.Example = `# Search local Codex CLI sessions
+	root := &cobra.Command{
+		Use:               "csessions [command]",
+		Short:             "Browse, search, and resume local Codex CLI sessions",
+		Long:              "Codex Sessions provides local search and resume access to Codex CLI sessions.",
+		SilenceUsage:      true,
+		SilenceErrors:     true,
+		DisableAutoGenTag: true,
+		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
+		Example: `# Search local Codex CLI sessions
 csessions search "query"
 
 # Resume a local Codex CLI session
-csessions resume codex`
+csessions resume`,
+		PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
+			if console && silent {
+				return utils.ValidationError{Message: "cannot use `console` and `silent` together"}
+			}
+			if debug && !console && !logFile {
+				return utils.ValidationError{Message: "`debug` requires either `console` or `log`"}
+			}
+			var logPath string
+			if logFile {
+				paths, err := config.ResolveCodexSessionsPaths()
+				if err != nil {
+					return err
+				}
+				logPath = filepath.Join(paths.CacheDir, "debug.log")
+			}
+			if err := log.SetupLogger(console, logFile, debug, logPath); err != nil {
+				return fmt.Errorf("setting up logger: %w", err)
+			}
+			log.SetSilent(silent)
+			return nil
+		},
+		Run: func(command *cobra.Command, _ []string) {
+			_ = command.Help()
+		},
+	}
 	root.Version = version
 	root.SetVersionTemplate("Codex Sessions {{.Version}}\n")
-	root.Run = func(command *cobra.Command, _ []string) {
-		_ = command.Help()
-	}
 	helpCmd := createLocalHelpCommand(root)
 	root.SetHelpCommand(helpCmd)
 	root.AddCommand(
@@ -1442,129 +1469,8 @@ var syncCmd *cobra.Command
 
 // Main entry point for the CLI
 func main() {
-	// Parse critical flags early by manually checking os.Args
-	// This is necessary because cobra's ParseFlags doesn't work correctly before subcommands are added
-	//
-	// --user-data-dir must be pre-parsed here: provider registry initialization
-	// (triggered by command construction below) probes IDE storage locations to
-	// decide which Copilot IDE variants to register, so the overrides have to be
-	// in effect before the first factory.GetRegistry() call. Waiting for cobra's
-	// RunE would be too late — a variant whose only install lives at an override
-	// path would never be registered.
-	var earlyUserDataDirs []string
-	args := os.Args[1:]
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch arg {
-		case "--no-usage-analytics":
-			noAnalytics = true
-		case "--console":
-			console = true
-		case "--log":
-			logFile = true
-		case "--debug":
-			debug = true
-		case "--silent":
-			silent = true
-		case "--no-version-check":
-			noVersionCheck = true
-		case "--no-telemetry-prompts":
-			noTelemetryPrompts = true
-		case "--output-dir":
-			// Handle --output-dir <value> format (space-separated)
-			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				outputDir = utils.ExpandTilde(args[i+1])
-				i++ // Skip the value in next iteration
-			}
-		case "--telemetry-endpoint":
-			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				telemetryEndpoint = args[i+1]
-				i++ // Skip the value in next iteration
-			}
-		case "--telemetry-service-name":
-			// Handle --telemetry-service-name <value> format (space-separated)
-			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				telemetryServiceName = args[i+1]
-				i++ // Skip the value in next iteration
-			}
-		case "--debug-dir":
-			// Handle --debug-dir <value> format (space-separated)
-			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				debugDir = utils.ExpandTilde(args[i+1])
-				i++ // Skip the value in next iteration
-			}
-		case "--config-dir":
-			// Handle --config-dir <value> format (space-separated). Pre-parsed so
-			// config.Load below can read the project config from the custom location.
-			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				configDir = utils.ExpandTilde(args[i+1])
-				i++ // Skip the value in next iteration
-			}
-		case "--user-data-dir":
-			// Handle --user-data-dir <value> format (space-separated, repeatable)
-			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				earlyUserDataDirs = append(earlyUserDataDirs, args[i+1])
-				i++ // Skip the value in next iteration
-			}
-		case "--local-time-zone":
-			localTimeZone = true
-		}
-		// Handle --output-dir=value format
-		if strings.HasPrefix(arg, "--output-dir=") {
-			outputDir = utils.ExpandTilde(strings.TrimPrefix(arg, "--output-dir="))
-		}
-		// Handle --debug-dir=value format
-		if strings.HasPrefix(arg, "--debug-dir=") {
-			debugDir = utils.ExpandTilde(strings.TrimPrefix(arg, "--debug-dir="))
-		}
-		// Handle --config-dir=value format
-		if strings.HasPrefix(arg, "--config-dir=") {
-			configDir = utils.ExpandTilde(strings.TrimPrefix(arg, "--config-dir="))
-		}
-		// Handle --telemetry-endpoint=value format
-		if strings.HasPrefix(arg, "--telemetry-endpoint=") {
-			telemetryEndpoint = strings.TrimPrefix(arg, "--telemetry-endpoint=")
-		}
-		// Handle --telemetry-service-name=value format
-		if strings.HasPrefix(arg, "--telemetry-service-name=") {
-			telemetryServiceName = strings.TrimPrefix(arg, "--telemetry-service-name=")
-		}
-		// Handle --user-data-dir=value format
-		if strings.HasPrefix(arg, "--user-data-dir=") {
-			earlyUserDataDirs = append(earlyUserDataDirs, strings.TrimPrefix(arg, "--user-data-dir="))
-		}
-	}
-
-	// The active product deliberately ignores inherited ~/.specstory and per-project
-	// configuration. Local TUI preferences are loaded lazily from XDG_CONFIG_HOME.
-	loadedConfig = &config.Config{}
-
-	// Set SPI debug dir override before any commands run
-	if debugDir != "" {
-		spi.SetDebugBaseDir(debugDir)
-	}
-
-	// Set up logging early before creating commands (which access the registry)
-	if console || logFile {
-		var logPath string
-		if logFile {
-			config, _ := utils.SetupOutputConfig(outputDir, debugDir)
-			logPath = config.GetLogPath()
-		}
-		_ = log.SetupLogger(console, logFile, debug, logPath)
-	} else {
-		// Set up discard logger to prevent default slog output
-		_ = log.SetupLogger(false, false, false, "")
-	}
-
-	// Apply --user-data-dir overrides before the commands are created: command
-	// construction initializes the provider registry, whose Copilot IDE variant
-	// gating probes the (possibly overridden) storage locations. The RunE-level
-	// ApplyUserDataDirOverrides calls re-apply the same values harmlessly.
-	cmdpkg.ApplyUserDataDirOverrides(earlyUserDataDirs)
-
-	// Construct only the local Codex Sessions command surface. Inherited commands remain
-	// compiled and tested, but are deliberately unreachable from the executable.
+	// Startup constructs only the supported local command tree. Inherited argument pre-parsing,
+	// provider probing, account/config loading, and remote initialization are intentionally absent.
 	rootCmd = createLocalCommandTree()
 
 	// Ensure proper cleanup and logging on exit

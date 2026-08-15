@@ -84,6 +84,7 @@ func TestLocalCommandsMakeNoNetworkConnections(t *testing.T) {
 		{args: []string{"help", "search"}, wantIdentity: true},
 		{args: []string{"help", "reindex"}, wantIdentity: true},
 		{args: []string{"version"}, wantIdentity: true},
+		{args: []string{"--log", "version"}, wantIdentity: true},
 		{args: []string{"--version"}, wantIdentity: true},
 		{args: []string{"reindex"}},
 	}
@@ -132,6 +133,10 @@ func TestLocalCommandsMakeNoNetworkConnections(t *testing.T) {
 	database := filepath.Join(tempDir, "data", "csessions", "sessions.db")
 	if _, err := os.Stat(database); err != nil {
 		t.Fatalf("reindex did not create XDG database %q: %v", database, err)
+	}
+	logPath := filepath.Join(tempDir, "cache", "csessions", "debug.log")
+	if _, err := os.Stat(logPath); err != nil {
+		t.Fatalf("--log did not write the XDG cache log %q: %v", logPath, err)
 	}
 }
 

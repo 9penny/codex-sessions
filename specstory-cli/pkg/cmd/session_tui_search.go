@@ -221,7 +221,12 @@ func (m sessionTUI) runSearch(seq int, kind tuiMode, ctx context.Context) tea.Cm
 		if !queryReady(query) {
 			return searchResultMsg{seq: seq, kind: kind}
 		}
-		sessions, _ := store.SearchContextVisibility(ctx, fq, projectID, showHidden)
+		var sessions []sessionindex.Session
+		if m.localOnly {
+			sessions, _ = store.SearchContextForAgentVisibility(ctx, fq, projectID, "codex", showHidden)
+		} else {
+			sessions, _ = store.SearchContextVisibility(ctx, fq, projectID, showHidden)
+		}
 		return searchResultMsg{seq: seq, kind: kind, sessions: sessions}
 	}
 }

@@ -687,8 +687,19 @@ func (s *Store) Exists(agent, sessionID string) (bool, error) {
 
 // Count returns the number of indexed sessions.
 func (s *Store) Count() (int, error) {
+	return s.CountForAgent("")
+}
+
+// CountForAgent counts only one provider when agent is non-empty.
+func (s *Store) CountForAgent(agent string) (int, error) {
 	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE deleted = 0 AND (kind = '' OR kind = 'interactive')`).Scan(&n); err != nil {
+	q := `SELECT COUNT(*) FROM sessions WHERE deleted = 0 AND (kind = '' OR kind = 'interactive')`
+	args := []any{}
+	if agent != "" {
+		q += ` AND agent = ?`
+		args = append(args, agent)
+	}
+	if err := s.db.QueryRow(q, args...).Scan(&n); err != nil {
 		return 0, err
 	}
 	return n, nil
@@ -787,9 +798,20 @@ func (s *Store) ListByProject(projectID string) ([]Session, error) {
 // ListByProjectVisibility optionally includes live background sessions. Normal product paths
 // pass false; the TUI's explicit show-hidden mode is the only supported true caller.
 func (s *Store) ListByProjectVisibility(projectID string, includeHidden bool) ([]Session, error) {
-	rows, err := s.db.Query(`SELECT `+sessionColumns+`
-		FROM sessions WHERE project_id = ? AND deleted = 0`+kindVisibilitySQL(includeHidden)+`
-		ORDER BY updated_at DESC, created_at DESC`, projectID)
+	return s.ListByProjectForAgentVisibility(projectID, "", includeHidden)
+}
+
+// ListByProjectForAgentVisibility adds an explicit provider boundary to the visibility query.
+// Codex Sessions uses agent="codex" so rows left by an older multi-provider build cannot reappear.
+func (s *Store) ListByProjectForAgentVisibility(projectID, agent string, includeHidden bool) ([]Session, error) {
+	q := `SELECT ` + sessionColumns + ` FROM sessions WHERE project_id = ? AND deleted = 0`
+	args := []any{projectID}
+	if agent != "" {
+		q += ` AND agent = ?`
+		args = append(args, agent)
+	}
+	q += kindVisibilitySQL(includeHidden) + ` ORDER BY updated_at DESC, created_at DESC`
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -821,8 +843,19 @@ func (s *Store) ListProjects() ([]ProjectSummary, error) {
 
 // ListProjectsVisibility optionally includes background sessions in project counts.
 func (s *Store) ListProjectsVisibility(includeHidden bool) ([]ProjectSummary, error) {
-	rows, err := s.db.Query(`SELECT project_id, project_name, agent, COUNT(*), MAX(updated_at)
-		FROM sessions WHERE deleted = 0` + kindVisibilitySQL(includeHidden) + ` GROUP BY project_id, agent`)
+	return s.ListProjectsForAgentVisibility("", includeHidden)
+}
+
+// ListProjectsForAgentVisibility rolls up only one provider when agent is non-empty.
+func (s *Store) ListProjectsForAgentVisibility(agent string, includeHidden bool) ([]ProjectSummary, error) {
+	q := `SELECT project_id, project_name, agent, COUNT(*), MAX(updated_at) FROM sessions WHERE deleted = 0`
+	args := []any{}
+	if agent != "" {
+		q += ` AND agent = ?`
+		args = append(args, agent)
+	}
+	q += kindVisibilitySQL(includeHidden) + ` GROUP BY project_id, agent`
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -936,11 +969,20 @@ func (s *Store) SearchContext(ctx context.Context, query, projectID string) ([]S
 // SearchContextVisibility optionally includes live background sessions. Default search remains
 // interactive-only; callers must explicitly opt in for a visibly marked show-hidden mode.
 func (s *Store) SearchContextVisibility(ctx context.Context, query, projectID string, includeHidden bool) ([]Session, error) {
+	return s.SearchContextForAgentVisibility(ctx, query, projectID, "", includeHidden)
+}
+
+// SearchContextForAgentVisibility restricts search to one provider when agent is non-empty.
+func (s *Store) SearchContextForAgentVisibility(ctx context.Context, query, projectID, agent string, includeHidden bool) ([]Session, error) {
 	q := `SELECT ` + prefixed("s", sessionColumns) + `
 		FROM sessions_fts
 		JOIN sessions s ON s.agent = sessions_fts.agent AND s.session_id = sessions_fts.session_id
 		WHERE sessions_fts MATCH ? AND s.deleted = 0` + prefixedKindVisibilitySQL("s", includeHidden)
 	args := []any{query}
+	if agent != "" {
+		q += ` AND s.agent = ?`
+		args = append(args, agent)
+	}
 	if projectID != "" {
 		q += ` AND s.project_id = ?`
 		args = append(args, projectID)

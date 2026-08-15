@@ -58,6 +58,9 @@ func createSearchCommand(cloudURL *string, defaults SessionFlagDefaults, localOn
 			defer func() { _ = store.Close() }()
 
 			total, _ := store.Count()
+			if localOnly {
+				total, _ = store.CountForAgent("codex")
+			}
 			if total == 0 {
 				reindexCommand := "specstory reindex"
 				if localOnly {
@@ -72,6 +75,9 @@ func createSearchCommand(cloudURL *string, defaults SessionFlagDefaults, localOn
 				homeID, homeName = unknownProjectID, filepath.Base(cwd)
 			}
 			homeSessions, _ := store.ListByProject(homeID)
+			if localOnly {
+				homeSessions, _ = store.ListByProjectForAgentVisibility(homeID, "codex", false)
+			}
 
 			agents := map[string]agentMeta{}
 			var installed []agentChoice
@@ -126,8 +132,18 @@ func createSearchCommand(cloudURL *string, defaults SessionFlagDefaults, localOn
 			if !ok {
 				return fmt.Errorf("search returned unexpected model type %T", final)
 			}
-			if rm.result.cancelled || rm.result.session == nil {
-				return nil // cancelled: nothing to launch
+			if rm.result.cancelled {
+				return nil
+			}
+			if rm.result.newSession {
+				codex, err := registry.Get("codex")
+				if err != nil {
+					return fmt.Errorf("Codex CLI provider is unavailable: %w", err)
+				}
+				return launchResume(&resumePlan{to: codex, toID: "codex", fromCwd: rm.result.newCwd, newSession: true}, cwd, launchOpts)
+			}
+			if rm.result.session == nil {
+				return nil
 			}
 
 			// The user asked to resume a found session — launch via the shared path.
@@ -172,7 +188,7 @@ func createSearchCommand(cloudURL *string, defaults SessionFlagDefaults, localOn
 		searchCmd.Short = "Search local Codex CLI sessions"
 		searchCmd.Long = `Search the redacted local Codex Sessions index.
 
-'search' opens an interactive full-text search. Press space to preview a match and 'r' to resume it with Codex CLI.`
+'search' opens an interactive full-text search. Press space for a masked native preview, enter or r to resume, and n to start Codex in the selected project.`
 	}
 
 	if !localOnly {

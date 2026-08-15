@@ -102,9 +102,8 @@ func runReindex(force bool) error {
 
 	registry := factory.GetRegistry()
 
-	// ---- Phase 1: enumerate every provider concurrently, then dedup ----
+	// ---- Phase 1: enumerate the active Codex provider, then dedup ----
 	ids, provs, perProvider := enumerateAll(registry, true)
-	recoverCursorCwds(ids, perProvider, store) // resolve Cursor cwds (index + other providers)
 
 	// Existing fingerprints, so unchanged sessions can be skipped (the incremental path).
 	fingerprints := map[string]sessionindex.Fingerprint{}

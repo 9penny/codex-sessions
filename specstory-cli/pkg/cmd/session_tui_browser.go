@@ -75,7 +75,13 @@ func startIndexWarm(p *tea.Program, projectID string, builtFresh bool) context.C
 // resume plan (or nil if the user cancelled). On a successful selection it persists the
 // view-mode and target-agent preferences to the user config.
 func selectResumeViaTUI(registry *factory.Registry, store *sessionindex.Store, projectID, projectName, projectCwd, presetTo string, builtFresh bool, pinned *sessionindex.Session, localOnly bool) (*resumePlan, error) {
-	sessions, err := store.ListByProject(projectID)
+	var sessions []sessionindex.Session
+	var err error
+	if localOnly {
+		sessions, err = store.ListByProjectForAgentVisibility(projectID, "codex", false)
+	} else {
+		sessions, err = store.ListByProject(projectID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("loading sessions: %w", err)
 	}
@@ -307,7 +313,7 @@ func colorForAgent(id string) color.Color {
 // enterBrowser switches to the all-projects browser, loading the project rollup lazily.
 func (m *sessionTUI) enterBrowser() {
 	if !m.projectsLoaded {
-		if ps, err := m.store.ListProjectsVisibility(m.showHidden); err == nil {
+		if ps, err := m.listProjects(); err == nil {
 			m.projects = ps
 		} else {
 			slog.Debug("session browser: failed to list projects", "error", err)
@@ -320,7 +326,7 @@ func (m *sessionTUI) enterBrowser() {
 
 // gotoHome returns the session list to the current directory's project.
 func (m *sessionTUI) gotoHome() {
-	if sessions, err := m.store.ListByProjectVisibility(m.homeProjectID, m.showHidden); err == nil {
+	if sessions, err := m.listProjectSessions(m.homeProjectID); err == nil {
 		m.homeSessions = sessions
 	}
 	m.projectID, m.projectName = m.homeProjectID, m.homeProjectName
@@ -337,7 +343,7 @@ func (m *sessionTUI) gotoHome() {
 
 // drillInto opens a project's session list from the browser.
 func (m *sessionTUI) drillInto(p sessionindex.ProjectSummary) {
-	sessions, err := m.store.ListByProjectVisibility(p.ProjectID, m.showHidden)
+	sessions, err := m.listProjectSessions(p.ProjectID)
 	if err != nil {
 		slog.Debug("session browser: failed to list project sessions", "project", p.ProjectID, "error", err)
 		return
@@ -406,7 +412,7 @@ func (m sessionTUI) updateProjects(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "n":
 		if m.projCursor >= 0 && m.projCursor < len(m.projFiltered) {
 			p := m.projFiltered[m.projCursor]
-			if sessions, err := m.store.ListByProjectVisibility(p.ProjectID, m.showHidden); err == nil {
+			if sessions, err := m.listProjectSessions(p.ProjectID); err == nil {
 				for _, sess := range sessions {
 					if cwd, ok := usableProjectCwd(sess.OriginCwd); ok {
 						return m.beginNewSession(cwd)

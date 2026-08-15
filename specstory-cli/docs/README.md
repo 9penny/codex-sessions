@@ -1,0 +1,14 @@
+# Documentation map
+
+Current Codex Sessions documents:
+
+- [v0.1 implementation plan](V0.1-IMPLEMENTATION-PLAN.md)
+- [resume TUI](RESUME-TUI.md)
+- [session search](SESSION-SEARCH.md)
+- [derived sessions index](SESSIONS-DB.md)
+- [archive inventory](ARCHIVED-UPSTREAM.md)
+
+Every other document in this directory is inherited upstream reference material unless a current
+document links to it explicitly. Those files describe unsupported SpecStory features and are not a
+user guide for `csessions`. They stay at their original paths to preserve history and reduce merge
+churn; see the archive inventory for the boundary.
