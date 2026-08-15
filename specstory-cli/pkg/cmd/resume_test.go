@@ -329,6 +329,41 @@ func TestPrepareResumeTargetLoadsSourceFromOriginCwd(t *testing.T) {
 	}
 }
 
+func TestResumeLaunchCwdUsesLocalSessionOrigin(t *testing.T) {
+	const currentCwd = "/work/launcher"
+	const originCwd = "/work/original-project"
+
+	tests := []struct {
+		name string
+		plan *resumePlan
+		want string
+	}{
+		{
+			name: "local indexed session",
+			plan: &resumePlan{fromCwd: originCwd},
+			want: originCwd,
+		},
+		{
+			name: "legacy local row without origin",
+			plan: &resumePlan{},
+			want: currentCwd,
+		},
+		{
+			name: "cloud path is not valid locally",
+			plan: &resumePlan{fromCwd: originCwd, fromCloud: true},
+			want: currentCwd,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resumeLaunchCwd(tt.plan, currentCwd); got != tt.want {
+				t.Errorf("resumeLaunchCwd() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestPrepareResumeTargetFallsBackToCurrentCwd verifies that when the index row carries
 // no origin cwd (older rows), the source load falls back to the current cwd rather than
 // loading from an empty path.

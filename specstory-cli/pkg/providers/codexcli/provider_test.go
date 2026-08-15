@@ -1055,3 +1055,25 @@ func TestExecuteCodex(t *testing.T) {
 		})
 	}
 }
+
+func TestExecuteCodexRunsInProjectPath(t *testing.T) {
+	workingDir := t.TempDir()
+	outputPath := filepath.Join(t.TempDir(), "pwd.txt")
+	stubPath := filepath.Join(t.TempDir(), "codex-stub")
+	stub := "#!/bin/sh\npwd > \"$CSESSIONS_TEST_PWD_FILE\"\n"
+	if err := os.WriteFile(stubPath, []byte(stub), 0o700); err != nil {
+		t.Fatalf("write Codex stub: %v", err)
+	}
+	t.Setenv("CSESSIONS_TEST_PWD_FILE", outputPath)
+
+	if err := executeCodex(stubPath, "synthetic-session", workingDir); err != nil {
+		t.Fatalf("executeCodex() error = %v", err)
+	}
+	got, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("read captured cwd: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != workingDir {
+		t.Errorf("Codex cwd = %q, want %q", strings.TrimSpace(string(got)), workingDir)
+	}
+}

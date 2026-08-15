@@ -225,9 +225,18 @@ type resumeLaunchOpts struct {
 	processing        session.ProcessingOptions // shared autosave processing options
 }
 
+func resumeLaunchCwd(plan *resumePlan, currentCwd string) string {
+	if plan != nil && !plan.fromCloud && plan.fromCwd != "" {
+		return plan.fromCwd
+	}
+	return currentCwd
+}
+
 // launchResume reconstructs (cross-agent) or natively resumes the planned session and
 // runs the agent with auto-save + provenance — the shared tail of `resume` and `search`.
 func launchResume(plan *resumePlan, cwd string, o resumeLaunchOpts) error {
+	launchCwd := resumeLaunchCwd(plan, cwd)
+
 	// Setup output configuration and project identity (needed for auto-save + cloud).
 	outConfig, err := utils.SetupOutputConfig(o.outputDir, o.flagDebugDir)
 	if err != nil {
@@ -240,7 +249,7 @@ func launchResume(plan *resumePlan, cwd string, o resumeLaunchOpts) error {
 	// this the autosave callback's cloud sync reads ./.specstory/.project.json and
 	// fails or syncs under the wrong identity when --output-dir is set.
 	cloud.SetSpecstoryDir(outConfig.GetSpecstoryDir())
-	if _, err := utils.NewProjectIdentityManager(cwd, outConfig.GetSpecstoryDir()).EnsureProjectIdentity(); err != nil {
+	if _, err := utils.NewProjectIdentityManager(launchCwd, outConfig.GetSpecstoryDir()).EnsureProjectIdentity(); err != nil {
 		slog.Error("Failed to ensure project identity", "error", err)
 	}
 
@@ -262,7 +271,7 @@ func launchResume(plan *resumePlan, cwd string, o resumeLaunchOpts) error {
 		"from_cloud":    plan.fromCloud,
 	})
 
-	resumeSessionID, err := prepareResumeTarget(plan, cwd, os.Stdout)
+	resumeSessionID, err := prepareResumeTarget(plan, launchCwd, os.Stdout)
 	if err != nil {
 		return err
 	}
@@ -277,7 +286,7 @@ func launchResume(plan *resumePlan, cwd string, o resumeLaunchOpts) error {
 		return err
 	}
 	defer provenanceCleanup()
-	fsCleanup, err := provenance.StartFSWatcher(ctx, provenanceEngine, cwd)
+	fsCleanup, err := provenance.StartFSWatcher(ctx, provenanceEngine, launchCwd)
 	if err != nil {
 		return err
 	}
@@ -285,7 +294,7 @@ func launchResume(plan *resumePlan, cwd string, o resumeLaunchOpts) error {
 
 	// Keep sessions.db current in real time alongside the markdown writes (nil/no-op if the
 	// index can't be opened — never block the resumed agent on it).
-	liveIndex := NewLiveIndexer(cwd)
+	liveIndex := NewLiveIndexer(launchCwd)
 	defer liveIndex.Close()
 
 	// Auto-save callback: the shared run/watch handling (markdown + cloud sync
@@ -302,7 +311,7 @@ func launchResume(plan *resumePlan, cwd string, o resumeLaunchOpts) error {
 	}
 
 	slog.Info("Launching resume", "provider", plan.to.Name(), "resumeSessionID", resumeSessionID)
-	if err := plan.to.ExecAgentAndWatch(cwd, "", resumeSessionID, o.debugRaw, sessionCallback); err != nil {
+	if err := plan.to.ExecAgentAndWatch(launchCwd, "", resumeSessionID, o.debugRaw, sessionCallback); err != nil {
 		slog.Error("Agent resume failed", "provider", plan.to.Name(), "error", err)
 		return err
 	}
