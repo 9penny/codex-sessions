@@ -13,6 +13,7 @@ import (
 )
 
 const DefaultBaseURL = "https://api.openai.com/v1"
+const DefaultModel = "gpt-5.4-mini"
 
 // Config contains only the settings needed by the explicit AI enrichment path.
 type Config struct {
@@ -33,7 +34,7 @@ func Load() (Config, error) {
 // LoadConfig loads a specific TOML file and then applies CSESSIONS_OPENAI_* environment
 // overrides. A missing file is valid so environment-only configuration works.
 func LoadConfig(path string) (Config, error) {
-	cfg := Config{BaseURL: DefaultBaseURL}
+	cfg := Config{BaseURL: DefaultBaseURL, Model: DefaultModel}
 	info, statErr := os.Stat(path)
 	if statErr == nil {
 		metadata, err := toml.DecodeFile(path, &cfg)

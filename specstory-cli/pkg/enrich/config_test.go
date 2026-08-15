@@ -26,6 +26,19 @@ func TestLoadConfigUsesPrivateFileAndEnvironmentOverrides(t *testing.T) {
 	}
 }
 
+func TestLoadConfigDefaultsToEvaluatedModel(t *testing.T) {
+	t.Setenv("CSESSIONS_OPENAI_API_KEY", "")
+	t.Setenv("CSESSIONS_OPENAI_BASE_URL", "")
+	t.Setenv("CSESSIONS_OPENAI_MODEL", "")
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Model != "gpt-5.4-mini" || cfg.BaseURL != DefaultBaseURL {
+		t.Fatalf("defaults = %#v", cfg)
+	}
+}
+
 func TestLoadConfigRejectsReadableKeyFileAndUnknownFields(t *testing.T) {
 	tests := []struct {
 		name    string
