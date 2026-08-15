@@ -10,7 +10,7 @@ os=$(uname -s)
 case "$os" in
   Linux) OS="Linux" ;;
   *)
-    printf 'Unsupported operating system: %s (v0.1 supports Linux and WSL)\n' "$os" >&2
+    printf 'Unsupported operating system: %s (Codex Sessions supports Linux and WSL)\n' "$os" >&2
     exit 1
     ;;
 esac
