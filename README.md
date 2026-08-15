@@ -5,7 +5,7 @@ Codex Sessions is a local-only terminal browser for Codex CLI history. It indexe
 search, preview, resume, or start sessions without an account or cloud service.
 
 > This is a personal-first open-source fork under active development. The `dev` branch is the
-> integration branch; `v0.1.0` is the first supported Linux/WSL release.
+> integration branch; `v0.2.0` is the current supported Linux/WSL release.
 
 ## Safety model
 
@@ -14,7 +14,8 @@ search, preview, resume, or start sessions without an account or cloud service.
   tool output are excluded.
 - Preview reads native JSONL on demand, masks secrets by default, and never caches raw text.
 - Uppercase `R` reveals only the current preview in process memory; navigating away clears it.
-- v0.1 has no login, sync, analytics, telemetry, version check, or other outbound path.
+- There is no login, sync, analytics, telemetry, or version check. Optional live AI enrichment is
+  the only supported outbound path and requires an explicit `csessions enrich --yes` invocation.
 - Background `subagent`, `exec`, and unknown-source sessions are hidden by default.
 
 ## Install
@@ -24,7 +25,7 @@ search, preview, resume, or start sessions without an account or cloud service.
 
 ```bash
 # Review the installer before running it, then install the latest release.
-curl -fsSLO https://raw.githubusercontent.com/9penny/codex-sessions/v0.1.0/install.sh
+curl -fsSLO https://raw.githubusercontent.com/9penny/codex-sessions/v0.2.0/install.sh
 less install.sh
 bash install.sh
 ```

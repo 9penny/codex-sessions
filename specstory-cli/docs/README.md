@@ -5,6 +5,8 @@ Current Codex Sessions documents:
 - [v0.2 implementation plan](V0.2-IMPLEMENTATION-PLAN.md)
 - [v0.2 synthetic model evaluation](V0.2-MODEL-EVALUATION.md)
 - [v0.2 AI enrichment privacy and usage](V0.2-ENRICHMENT.md)
+- [v0.2 release gate](V0.2-RELEASE-GATE.md)
+- [v0.2 release notes](V0.2-RELEASE-NOTES.md)
 - [v0.1 implementation plan](V0.1-IMPLEMENTATION-PLAN.md)
 - [v0.1 release gate](V0.1-RELEASE-GATE.md)
 - [v0.1 release notes](V0.1-RELEASE-NOTES.md)
