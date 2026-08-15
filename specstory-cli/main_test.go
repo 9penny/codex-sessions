@@ -27,7 +27,7 @@ func TestLocalCommandTreeExcludesOutboundSurfaces(t *testing.T) {
 		commands = append(commands, command.Name())
 	}
 	slices.Sort(commands)
-	wantCommands := []string{"help", "reindex", "resume", "search", "version"}
+	wantCommands := []string{"enrich", "help", "reindex", "resume", "search", "version"}
 	if !slices.Equal(commands, wantCommands) {
 		t.Fatalf("local commands = %v, want %v", commands, wantCommands)
 	}
@@ -83,6 +83,8 @@ func TestLocalCommandsMakeNoNetworkConnections(t *testing.T) {
 		{args: []string{"help", "resume"}, wantIdentity: true},
 		{args: []string{"help", "search"}, wantIdentity: true},
 		{args: []string{"help", "reindex"}, wantIdentity: true},
+		{args: []string{"help", "enrich"}, wantIdentity: true},
+		{args: []string{"help", "enrich", "models"}, wantIdentity: true},
 		{args: []string{"version"}, wantIdentity: true},
 		{args: []string{"--log", "version"}, wantIdentity: true},
 		{args: []string{"--version"}, wantIdentity: true},
