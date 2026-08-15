@@ -102,14 +102,25 @@ func detectChunked(d *detect.Detector, content string) []report.Finding {
 // If the detector cannot be initialised, content is returned unchanged so that
 // history is still written rather than lost.
 func RedactContent(content string) (string, int) {
-	d, err := getDetector()
+	redacted, count, err := RedactContentSafe(content)
 	if err != nil {
 		warnOnce.Do(func() {
 			slog.Warn("Secret redaction unavailable, writing content unredacted", "error", err)
 		})
 		return content, 0
 	}
-	return applyRedactions(content, detectChunked(d, content))
+	return redacted, count
+}
+
+// RedactContentSafe is the fail-closed variant for derived indexes and outbound AI
+// requests. It never returns the original content when detector initialization fails.
+func RedactContentSafe(content string) (string, int, error) {
+	d, err := getDetector()
+	if err != nil {
+		return "", 0, fmt.Errorf("initialize secret detector: %w", err)
+	}
+	redacted, count := applyRedactions(content, detectChunked(d, content))
+	return redacted, count, nil
 }
 
 // applyRedactions replaces each finding's secret value with a labelled

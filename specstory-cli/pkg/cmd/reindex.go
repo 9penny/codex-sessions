@@ -18,6 +18,7 @@ import (
 
 	"github.com/specstoryai/getspecstory/specstory-cli/pkg/analytics"
 	"github.com/specstoryai/getspecstory/specstory-cli/pkg/providers/cursorcli"
+	"github.com/specstoryai/getspecstory/specstory-cli/pkg/redact"
 	"github.com/specstoryai/getspecstory/specstory-cli/pkg/sessionindex"
 	"github.com/specstoryai/getspecstory/specstory-cli/pkg/spi"
 	"github.com/specstoryai/getspecstory/specstory-cli/pkg/spi/factory"
@@ -47,9 +48,10 @@ const (
 	//   7: recover Cursor session cwds (match their project-hash dir against other providers'
 	//      cwds) so Cursor sessions bucket under their real project instead of "unknown" —
 	//      existing Cursor rows stay "unknown" until re-parsed, so bump to re-bucket them
-	//   8: persist native session kind so background Codex subagent/exec sessions can be hidden
-	//      from default browse and search queries
-	reindexVersion = 8
+//   8: persist native session kind so background Codex subagent/exec sessions can be hidden
+//      from default browse and search queries
+//   9: index only redacted user/assistant text; omit thinking, tool calls, and tool output
+reindexVersion = 9
 )
 
 // CreateReindexCommand builds the `specstory reindex` command: a full, from-scratch
@@ -685,22 +687,35 @@ func drainToStore(store *sessionindex.Store, ch <-chan sessionindex.Session) err
 
 // ---- session field derivation ----
 
-// flattenBody renders SessionData to plain user/agent text for full-text indexing,
-// reusing the reconstruction flattener (synthetic noise already stripped). No
-// migration note is prepended — this is index content, not a resumed transcript.
+// flattenBody extracts only user/assistant conversational text for full-text indexing.
+// Thinking, tool calls, tool parameters, and tool output are excluded structurally before
+// secret detection. If redaction is unavailable, it returns an empty body (fail closed).
 func flattenBody(data *schema.SessionData) string {
-	turns := spi.FlattenSessionData(data, "")
 	var b strings.Builder
-	for _, t := range turns {
-		if t.Text == "" {
-			continue
+	if data != nil {
+		for _, exchange := range data.Exchanges {
+			for _, message := range exchange.Messages {
+				if (message.Role != schema.RoleUser && message.Role != schema.RoleAgent) || message.Tool != nil {
+					continue
+				}
+				for _, part := range message.Content {
+					if part.Type != schema.ContentTypeText || strings.TrimSpace(part.Text) == "" {
+						continue
+					}
+					if b.Len() > 0 {
+						b.WriteString("\n\n")
+					}
+					b.WriteString(part.Text)
+				}
+			}
 		}
-		if b.Len() > 0 {
-			b.WriteString("\n\n")
-		}
-		b.WriteString(t.Text)
 	}
-	return b.String()
+	redacted, _, err := redact.RedactContentSafe(b.String())
+	if err != nil {
+		slog.Error("reindex: redaction unavailable; omitting session body", "error", err)
+		return ""
+	}
+	return redacted
 }
 
 // countTurns returns (user prompts, all messages) across the session's exchanges.

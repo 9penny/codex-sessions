@@ -64,6 +64,47 @@ func TestFlattenBody(t *testing.T) {
 	}
 }
 
+func TestFlattenBodyStoresOnlyRedactedConversationText(t *testing.T) {
+	const fakeToken = "gho_16C7e42F292c6912E7710c838347Ae178B4a"
+	toolSummary := "tool output containing database-password"
+	data := &schema.SessionData{Exchanges: []schema.Exchange{{Messages: []schema.Message{
+		{
+			Role: schema.RoleUser,
+			Content: []schema.ContentPart{{Type: schema.ContentTypeText,
+				Text: "please use token " + fakeToken}},
+		},
+		{
+			Role: schema.RoleAgent,
+			Content: []schema.ContentPart{
+				{Type: schema.ContentTypeThinking, Text: "private chain of thought"},
+				{Type: schema.ContentTypeText, Text: "safe assistant answer"},
+			},
+		},
+		{
+			Role: schema.RoleAgent,
+			Tool: &schema.ToolInfo{
+				Name:    "exec_command",
+				Type:    schema.ToolTypeShell,
+				Summary: &toolSummary,
+				Input:   map[string]interface{}{"cmd": "printenv SECRET"},
+				Output:  map[string]interface{}{"output": "database-password"},
+			},
+		},
+	}}}}
+
+	body := flattenBody(data)
+	for _, want := range []string{"please use token", "[REDACTED:github-oauth]", "safe assistant answer"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("indexed body missing %q; got %q", want, body)
+		}
+	}
+	for _, forbidden := range []string{fakeToken, "private chain of thought", "database-password", "printenv SECRET"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("indexed body contains forbidden content %q: %q", forbidden, body)
+		}
+	}
+}
+
 func TestProjectIDCacheUnknownForEmptyCwd(t *testing.T) {
 	c := &projectIDCache{m: map[string]projectIDName{}}
 	id, name := c.resolve("")
