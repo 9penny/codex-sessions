@@ -138,7 +138,7 @@ func createSearchCommand(cloudURL *string, defaults SessionFlagDefaults, localOn
 			if rm.result.newSession {
 				codex, err := registry.Get("codex")
 				if err != nil {
-					return fmt.Errorf("Codex CLI provider is unavailable: %w", err)
+					return fmt.Errorf("codex CLI provider is unavailable: %w", err)
 				}
 				return launchResume(&resumePlan{to: codex, toID: "codex", fromCwd: rm.result.newCwd, newSession: true}, cwd, launchOpts)
 			}

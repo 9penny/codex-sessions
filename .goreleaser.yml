@@ -1,48 +1,29 @@
 version: 2
 
-project_name: SpecStoryCLI
+project_name: CodexSessions
 
-# Builds are split by OS family only so archives can differ per platform:
-# Unix ships both tar.gz and zip (long-standing dual-format convention),
-# Windows ships zip only (the platform convention).
 builds:
-  - id: unix
+  - id: linux
+    dir: ./specstory-cli
+    main: ./main.go
+    binary: csessions
     env:
       - CGO_ENABLED=0
     goos:
       - linux
-      - darwin
     goarch:
       - amd64
       - arm64
-    binary: specstory
-    main: ./main.go
-    dir: ./specstory-cli
     ldflags:
       - -s -w
       - -X main.version={{.Version}}
-      - -X github.com/specstoryai/getspecstory/specstory-cli/pkg/analytics.apiKey={{.Env.POSTHOG_API_KEY}}
-  - id: windows
-    env:
-      - CGO_ENABLED=0
-    goos:
-      - windows
-    goarch:
-      - amd64
-      - arm64
-    binary: specstory
-    main: ./main.go
-    dir: ./specstory-cli
-    ldflags:
-      - -s -w
-      - -X main.version={{.Version}}
-      - -X github.com/specstoryai/getspecstory/specstory-cli/pkg/analytics.apiKey={{.Env.POSTHOG_API_KEY}}
 
 archives:
-  # tar.gz for Unix only — Homebrew and install.sh consume these.
   - id: targz
-    ids: [unix]
-    formats: [tar.gz]
+    ids:
+      - linux
+    formats:
+      - tar.gz
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
@@ -50,13 +31,17 @@ archives:
       {{- else }}{{ .Arch }}{{ end }}
     files:
       - none*
-  # zip for every platform — the only Windows format, and a Unix alternative.
-  - id: zip
-    formats: [zip]
-    name_template: >-
-      {{ .ProjectName }}_
-      {{- title .Os }}_
-      {{- if eq .Arch "amd64" }}x86_64
-      {{- else }}{{ .Arch }}{{ end }}
-    files:
-      - none*
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  name_template: Codex Sessions {{.Tag}}
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'

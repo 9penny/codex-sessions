@@ -169,7 +169,7 @@ func selectResumeViaTUI(registry *factory.Registry, store *sessionindex.Store, p
 	if rm.result.newSession {
 		codex, err := registry.Get("codex")
 		if err != nil {
-			return nil, fmt.Errorf("Codex CLI provider is unavailable: %w", err)
+			return nil, fmt.Errorf("codex CLI provider is unavailable: %w", err)
 		}
 		return &resumePlan{to: codex, toID: "codex", fromCwd: rm.result.newCwd, newSession: true}, nil
 	}

@@ -127,6 +127,8 @@ func validateFlags() error {
 }
 
 // createRootCommand dynamically creates the root command with provider information
+//
+//nolint:unused // Inherited upstream command retained as unsupported reference code.
 func createRootCommand() *cobra.Command {
 	registry := factory.GetRegistry()
 	ids := registry.ListIDs()
