@@ -538,8 +538,10 @@ func FingerprintKey(agent, sessionID string) string {
 }
 
 // ListEnrichmentCandidates returns newest-first Codex sessions whose derived AI
-// metadata is absent or stale. force includes every live interactive Codex session.
-func (s *Store) ListEnrichmentCandidates(limit, promptVersion int, force bool) ([]Session, error) {
+// metadata is absent or stale. A non-empty projectID scopes the candidates before
+// the limit is applied; an empty projectID selects all projects. force includes
+// every live interactive Codex session in the selected scope.
+func (s *Store) ListEnrichmentCandidates(projectID string, limit, promptVersion int, force bool) ([]Session, error) {
 	if limit < 1 || limit > 1000 {
 		return nil, fmt.Errorf("enrichment limit must be between 1 and 1000")
 	}
@@ -551,6 +553,10 @@ func (s *Store) ListEnrichmentCandidates(limit, promptVersion int, force bool) (
 		WHERE deleted = 0 AND agent = 'codex' AND native_path != ''
 		AND (kind = '' OR kind = 'interactive')`
 	args := []any{}
+	if projectID != "" {
+		q += ` AND project_id = ?`
+		args = append(args, projectID)
+	}
 	if !force {
 		q += ` AND NOT EXISTS (
 			SELECT 1 FROM ai_metadata a

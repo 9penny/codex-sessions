@@ -175,7 +175,7 @@ func TestAIMetadataCandidatesTrackSourceFingerprint(t *testing.T) {
 	if err := s.Upsert(session); err != nil {
 		t.Fatal(err)
 	}
-	candidates, err := s.ListEnrichmentCandidates(10, 1, false)
+	candidates, err := s.ListEnrichmentCandidates("", 10, 1, false)
 	if err != nil || len(candidates) != 1 {
 		t.Fatalf("initial candidates = %d, %v", len(candidates), err)
 	}
@@ -188,7 +188,7 @@ func TestAIMetadataCandidatesTrackSourceFingerprint(t *testing.T) {
 	if err := s.UpsertAIMetadata(metadata); err != nil {
 		t.Fatal(err)
 	}
-	if candidates, err = s.ListEnrichmentCandidates(10, 1, false); err != nil || len(candidates) != 0 {
+	if candidates, err = s.ListEnrichmentCandidates("", 10, 1, false); err != nil || len(candidates) != 0 {
 		t.Fatalf("unchanged candidates = %d, %v", len(candidates), err)
 	}
 	stored, ok, err := s.GetAIMetadata("codex", "ai-1")
@@ -200,10 +200,10 @@ func TestAIMetadataCandidatesTrackSourceFingerprint(t *testing.T) {
 	if err := s.Upsert(session); err != nil {
 		t.Fatal(err)
 	}
-	if candidates, err = s.ListEnrichmentCandidates(10, 1, false); err != nil || len(candidates) != 1 {
+	if candidates, err = s.ListEnrichmentCandidates("", 10, 1, false); err != nil || len(candidates) != 1 {
 		t.Fatalf("stale candidates = %d, %v", len(candidates), err)
 	}
-	if candidates, err = s.ListEnrichmentCandidates(10, 1, true); err != nil || len(candidates) != 1 {
+	if candidates, err = s.ListEnrichmentCandidates("", 10, 1, true); err != nil || len(candidates) != 1 {
 		t.Fatalf("forced candidates = %d, %v", len(candidates), err)
 	}
 }

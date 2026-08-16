@@ -106,6 +106,37 @@ func TestEnrichSessionsDryRunMakesNoRequestOrWrite(t *testing.T) {
 	}
 }
 
+func TestEnrichSessionsScopesCandidatesToProject(t *testing.T) {
+	store := openTempSessionStore(t)
+	target := indexedEnrichmentFixture(t, store)
+	other := target
+	other.ProjectID = "other-project"
+	other.ProjectName = "other-project"
+	other.SessionID = "22222222-2222-2222-2222-222222222222"
+	other.UpdatedAt = "2026-08-15T02:00:07Z"
+	if err := store.Upsert(other); err != nil {
+		t.Fatal(err)
+	}
+	generator := &recordingMetadataGenerator{}
+
+	stats, err := enrichSessions(context.Background(), store, factory.GetRegistry(), generator, enrichmentOptions{
+		ProjectID: target.ProjectID, Limit: 10, PromptVersion: 1, Model: "test-model",
+		MaxInputTokens: 2000, MaxTotalInputTokens: 10000, MaxOutputTokens: 256,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Candidates != 1 || stats.Enriched != 1 || len(generator.requests) != 1 {
+		t.Fatalf("stats=%+v requests=%d; want only the target project's session", stats, len(generator.requests))
+	}
+	if _, ok, err := store.GetAIMetadata("codex", target.SessionID); err != nil || !ok {
+		t.Fatalf("target metadata: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := store.GetAIMetadata("codex", other.SessionID); err != nil || ok {
+		t.Fatalf("other-project metadata: ok=%v err=%v", ok, err)
+	}
+}
+
 func TestEnrichSessionsRefusesSourceChangedAfterIndex(t *testing.T) {
 	store := openTempSessionStore(t)
 	session := indexedEnrichmentFixture(t, store)
