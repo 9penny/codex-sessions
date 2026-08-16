@@ -5,7 +5,7 @@ Codex Sessions is a local-only terminal browser for Codex CLI history. It indexe
 search, preview, resume, or start sessions without an account or cloud service.
 
 > This is a personal-first open-source fork under active development. The `dev` branch is the
-> integration branch; `v0.2.1` is the current supported Linux/WSL release.
+> integration branch; `v0.2.2` is the current supported Linux/WSL release.
 
 ## Safety model
 
@@ -25,7 +25,7 @@ search, preview, resume, or start sessions without an account or cloud service.
 
 ```bash
 # Review the installer before running it, then install the latest release.
-curl -fsSLO https://raw.githubusercontent.com/9penny/codex-sessions/v0.2.1/install.sh
+curl -fsSLO https://raw.githubusercontent.com/9penny/codex-sessions/v0.2.2/install.sh
 less install.sh
 bash install.sh
 ```
@@ -80,7 +80,7 @@ Codex Sessions respects the XDG base-directory variables:
 | Purpose | Default path |
 |---|---|
 | Configuration | `~/.config/csessions/` |
-| Derived index | `~/.local/share/csessions/sessions.db` |
+| Derived index (directory 0700, SQLite files 0600) | `~/.local/share/csessions/sessions.db` |
 | Disposable cache | `~/.cache/csessions/` |
 
 Deleting the derived database is safe; `csessions reindex` rebuilds it from native JSONL.

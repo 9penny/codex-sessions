@@ -160,8 +160,8 @@ func OpenReader(path string) (*Store, error) {
 }
 
 func openWith(path string, maxConns int) (*Store, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, fmt.Errorf("creating database directory: %w", err)
+	if err := preparePrivateIndex(path); err != nil {
+		return nil, err
 	}
 
 	s, err := openStore(path, maxConns)
@@ -199,7 +199,63 @@ func openStore(path string, maxConns int) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("ensuring schema: %w", err)
 	}
+	if err := tightenSQLiteFileModes(path); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return s, nil
+}
+
+// preparePrivateIndex creates the index behind a private directory boundary and
+// tightens permissions left by earlier releases before SQLite opens the file.
+func preparePrivateIndex(path string) error {
+	dir := filepath.Dir(path)
+	_, statErr := os.Stat(dir)
+	dirDidNotExist := os.IsNotExist(statErr)
+	if statErr != nil && !dirDidNotExist {
+		return fmt.Errorf("inspecting database directory: %w", statErr)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("creating database directory: %w", err)
+	}
+	// The default csessions directory belongs to this application, including when
+	// migrating an existing install. Avoid changing an unrelated directory when a
+	// package caller deliberately places the database elsewhere.
+	if dirDidNotExist || filepath.Base(dir) == "csessions" {
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return fmt.Errorf("securing database directory: %w", err)
+		}
+	}
+
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	if err == nil {
+		if err := f.Close(); err != nil {
+			return fmt.Errorf("creating private database file: %w", err)
+		}
+		return nil
+	}
+	if !os.IsExist(err) {
+		return fmt.Errorf("creating private database file: %w", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("securing database file: %w", err)
+	}
+	return nil
+}
+
+// tightenSQLiteFileModes secures the main database and any WAL files SQLite
+// created while ensuring the schema. The directory is already private, so the
+// sidecars cannot be reached by other users before this final chmod pass.
+func tightenSQLiteFileModes(path string) error {
+	for _, candidate := range []string{path, path + "-wal", path + "-shm"} {
+		if err := os.Chmod(candidate, 0o600); err != nil {
+			if os.IsNotExist(err) && candidate != path {
+				continue
+			}
+			return fmt.Errorf("securing SQLite file %q: %w", candidate, err)
+		}
+	}
+	return nil
 }
 
 // isDiskIOError reports whether err is (or wraps) a SQLite disk-I/O error — the SQLITE_IOERR
