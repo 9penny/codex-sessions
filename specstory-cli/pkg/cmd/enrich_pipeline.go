@@ -21,6 +21,7 @@ type metadataGenerator interface {
 type enrichmentOptions struct {
 	DryRun              bool
 	Force               bool
+	ProjectID           string
 	Limit               int
 	PromptVersion       int
 	Model               string
@@ -75,7 +76,7 @@ func enrichSessions(ctx context.Context, store *sessionindex.Store, registry *fa
 		return stats, errors.New("AI enrichment client is unavailable")
 	}
 
-	candidates, err := store.ListEnrichmentCandidates(opts.Limit, opts.PromptVersion, opts.Force)
+	candidates, err := store.ListEnrichmentCandidates(opts.ProjectID, opts.Limit, opts.PromptVersion, opts.Force)
 	if err != nil {
 		return stats, fmt.Errorf("selecting enrichment candidates: %w", err)
 	}

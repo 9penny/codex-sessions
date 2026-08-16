@@ -2,12 +2,57 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/specstoryai/getspecstory/specstory-cli/pkg/enrich"
 	"github.com/specstoryai/getspecstory/specstory-cli/pkg/sessionindex"
 	"github.com/specstoryai/getspecstory/specstory-cli/pkg/spi/factory"
+	"github.com/specstoryai/getspecstory/specstory-cli/pkg/utils"
 	"github.com/spf13/cobra"
 )
+
+type enrichmentScope struct {
+	ProjectID string
+	Label     string
+}
+
+func resolveEnrichmentScope(allProjects bool, projectPath string) (enrichmentScope, error) {
+	if allProjects && strings.TrimSpace(projectPath) != "" {
+		return enrichmentScope{}, fmt.Errorf("--all and --project cannot be used together")
+	}
+	if allProjects {
+		return enrichmentScope{Label: "all projects"}, nil
+	}
+
+	path := strings.TrimSpace(projectPath)
+	scopeKind := "project"
+	if path == "" {
+		var err error
+		path, err = os.Getwd()
+		if err != nil {
+			return enrichmentScope{}, fmt.Errorf("resolving current project: %w", err)
+		}
+		scopeKind = "current project"
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return enrichmentScope{}, fmt.Errorf("resolving project path: %w", err)
+	}
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return enrichmentScope{}, fmt.Errorf("reading project path: %w", err)
+	}
+	if !info.IsDir() {
+		return enrichmentScope{}, fmt.Errorf("project path is not a directory: %s", absPath)
+	}
+	projectID, projectName, err := utils.ComputeProjectID(absPath)
+	if err != nil {
+		return enrichmentScope{}, err
+	}
+	return enrichmentScope{ProjectID: projectID, Label: fmt.Sprintf("%s (%s)", scopeKind, projectName)}, nil
+}
 
 // CreateEnrichCommand exposes the only command family allowed to construct an AI HTTP client.
 func CreateEnrichCommand() *cobra.Command {
@@ -20,6 +65,8 @@ func CreateEnrichCommand() *cobra.Command {
 		maxInputTokens      int
 		maxTotalInputTokens int
 		maxOutputTokens     int
+		allProjects         bool
+		projectPath         string
 	)
 	command := &cobra.Command{
 		Use:   "enrich",
@@ -32,6 +79,13 @@ func CreateEnrichCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !dryRun && !confirmed {
 				return fmt.Errorf("live enrichment requires --yes to confirm sending redacted conversation text")
+			}
+			scope, err := resolveEnrichmentScope(allProjects, projectPath)
+			if err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Scope: %s\n", scope.Label); err != nil {
+				return err
 			}
 			selectedModel := model
 			var generator metadataGenerator
@@ -67,8 +121,9 @@ func CreateEnrichCommand() *cobra.Command {
 			}
 			defer func() { _ = store.Close() }()
 			stats, err := enrichSessions(cmd.Context(), store, factory.GetRegistry(), generator, enrichmentOptions{
-				DryRun: dryRun, Force: force, Limit: limit, PromptVersion: sessionindex.CurrentAIPromptVersion,
-				Model: selectedModel, MaxInputTokens: maxInputTokens,
+				DryRun: dryRun, Force: force, ProjectID: scope.ProjectID, Limit: limit,
+				PromptVersion: sessionindex.CurrentAIPromptVersion,
+				Model:         selectedModel, MaxInputTokens: maxInputTokens,
 				MaxTotalInputTokens: maxTotalInputTokens, MaxOutputTokens: maxOutputTokens,
 			})
 			if err != nil {
@@ -92,6 +147,8 @@ func CreateEnrichCommand() *cobra.Command {
 	command.Flags().IntVar(&maxInputTokens, "max-input-tokens", 2000, "conservative per-session input budget")
 	command.Flags().IntVar(&maxTotalInputTokens, "max-total-input-tokens", 10000, "conservative total input budget")
 	command.Flags().IntVar(&maxOutputTokens, "max-output-tokens", 256, "maximum output tokens per request")
+	command.Flags().BoolVar(&allProjects, "all", false, "process sessions from all indexed projects")
+	command.Flags().StringVar(&projectPath, "project", "", "process the project containing this directory")
 	command.AddCommand(&cobra.Command{
 		Use:   "models",
 		Short: "List model IDs exposed by the configured API endpoint",
