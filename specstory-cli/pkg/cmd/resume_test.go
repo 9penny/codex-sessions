@@ -358,6 +358,21 @@ func TestLaunchNewCodexSessionUsesCwdAndNoResumeID(t *testing.T) {
 	}
 }
 
+func TestLocalOnlyFootersAdvertiseAvailableDeleteAndProjectFilterKeys(t *testing.T) {
+	list := sessionTUI{localOnly: true}
+	if footer := list.renderFooter(); !strings.Contains(footer, "d delete") {
+		t.Errorf("local list footer omits delete key: %q", footer)
+	}
+
+	projects := sessionTUI{localOnly: true, mode: modeProjects, width: 120, height: 24}
+	view := projects.renderProjects()
+	for _, want := range []string{"p filter projects", "d delete"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("local projects footer omits %q: %q", want, view)
+		}
+	}
+}
+
 // fakeProvider is a minimal spi.Provider for exercising prepareResumeTarget. It records
 // the projectPath it is asked to load the source session from, and reconstructs into a
 // caller-provided directory so the write/visibility tail succeeds.
@@ -367,6 +382,9 @@ type fakeProvider struct {
 	gotExecPath string
 	gotResumeID string
 	nativeDir   string // where NativeSessionPath places the reconstructed file
+	enumRefs    []spi.GlobalSessionRef
+	enumErr     error
+	enumPanic   bool
 	// reconstructUnsupported makes the fake report no native serializer, the way
 	// Antigravity does: both ReconstructSession and NativeSessionPath answer
 	// spi.ErrReconstructionUnsupported.
@@ -416,7 +434,12 @@ func (f *fakeProvider) ExecAgentAndWatch(projectPath, _ string, resumeID string,
 func (f *fakeProvider) WatchAgent(context.Context, string, bool, func(*spi.AgentChatSession)) error {
 	return nil
 }
-func (f *fakeProvider) ListAllAgentChatSessions() ([]spi.GlobalSessionRef, error) { return nil, nil }
+func (f *fakeProvider) ListAllAgentChatSessions() ([]spi.GlobalSessionRef, error) {
+	if f.enumPanic {
+		panic("enumeration panic")
+	}
+	return f.enumRefs, f.enumErr
+}
 
 // TestActiveRegistrySupportsCodexReconstruction pins the capability used by the
 // local resume path without making archived providers reachable again.

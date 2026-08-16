@@ -20,7 +20,8 @@ or empty derived index is rebuilt from native Codex JSONL first.
   projects where available.
 - `h` toggles process-local visibility of background `subagent`, `exec`, and unknown-source
   sessions. The header shows `HIDDEN SHOWN`, and rows carry a kind label while enabled.
-- `d` soft-deletes an indexed row after confirmation. Native JSONL is never deleted.
+- `d` soft-deletes an indexed row after confirmation. Native JSONL is never deleted, and the
+  tombstone prevents ordinary or forced reindex from restoring the row.
 - `q` quits; `esc` closes the current mode or goes back.
 
 The local-mode footer is intentionally compact enough for an 80-column SSH terminal.
@@ -38,6 +39,9 @@ uses the native fallback.
 The index and native files remain separate:
 
 - deleting `sessions.db` and running `csessions reindex` restores soft-deleted rows;
+- Codex `/delete` permanently removes a saved native session; after a complete successful scan,
+  `csessions reindex` removes the corresponding live derived row, FTS data, and AI metadata;
+- failed, panicking, partial, or interrupted scans never use absence as deletion evidence;
 - no TUI action mutates files under `~/.codex/sessions`;
 - a preview parse or redaction failure blocks preview rather than falling back to unsafe content.
 

@@ -1,12 +1,35 @@
 package spi
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestScanSessionsInParallelReturnsPartialResultsWithScanError(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"good.jsonl", "bad.jsonl"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("fixture"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	refs, err := ScanSessionsInParallel(root, "codex", nil, func(path string) (*GlobalSessionRef, error) {
+		if filepath.Base(path) == "bad.jsonl" {
+			return nil, fmt.Errorf("malformed fixture")
+		}
+		return &GlobalSessionRef{SessionID: "good"}, nil
+	})
+	if err == nil {
+		t.Fatal("ScanSessionsInParallel error = nil; want incomplete-scan error")
+	}
+	if len(refs) != 1 || refs[0].SessionID != "good" {
+		t.Fatalf("partial refs = %+v; want the valid session", refs)
+	}
+}
 
 func TestGetCanonicalPath(t *testing.T) {
 	tests := []struct {

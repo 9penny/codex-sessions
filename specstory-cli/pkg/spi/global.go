@@ -100,15 +100,19 @@ type ProgressEnumerator interface {
 //
 // scan returns (ref, nil) to include a session, (nil, nil) to skip a non-session file
 // (warmup-only / empty / sidechain-only), or (nil, err) to log-and-skip a malformed file.
-// Files are independent and the per-file read+parse is CPU-bound, so scanning fans out across
-// CPUs; output order is unspecified (reindex dedups and sorts later). r counts sessions found
-// (not files scanned) and is nil-safe. label names the provider in scan-failure logs.
+// Valid refs are returned even when another file fails, together with an aggregate error so a
+// caller may still index the partial results without treating them as deletion evidence. Files
+// are independent and the per-file read+parse is CPU-bound, so scanning fans out across CPUs;
+// output order is unspecified (reindex dedups and sorts later). r counts sessions found (not
+// files scanned) and is nil-safe. label names the provider in scan-failure logs.
 func ScanSessionsInParallel(root, label string, r *ScanReporter, scan func(path string) (*GlobalSessionRef, error)) ([]GlobalSessionRef, error) {
 	// Phase 1: collect file paths (dirents only — no opens).
 	var paths []string
+	walkFailures := 0
 	walkErr := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			return nil // skip unreadable entries rather than abort the whole sweep
+			walkFailures++
+			return nil // keep partial results, but report the inventory as incomplete below
 		}
 		if d.IsDir() || filepath.Ext(path) != ".jsonl" {
 			return nil
@@ -126,6 +130,7 @@ func ScanSessionsInParallel(root, label string, r *ScanReporter, scan func(path 
 	refs := make([]GlobalSessionRef, 0, len(paths))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	var scanFailures atomic.Int64
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func() {
@@ -134,6 +139,7 @@ func ScanSessionsInParallel(root, label string, r *ScanReporter, scan func(path 
 				ref, scanErr := safeScan(scan, path)
 				if scanErr != nil {
 					slog.Warn("reindex: failed to scan session", "agent", label, "path", path, "error", scanErr)
+					scanFailures.Add(1)
 					continue
 				}
 				if ref == nil {
@@ -151,6 +157,10 @@ func ScanSessionsInParallel(root, label string, r *ScanReporter, scan func(path 
 	}
 	close(pathCh)
 	wg.Wait()
+	failures := int(scanFailures.Load()) + walkFailures
+	if failures > 0 {
+		return refs, fmt.Errorf("%d %s session paths failed to scan", failures, label)
+	}
 	return refs, nil
 }
 

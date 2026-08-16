@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -103,7 +104,7 @@ func runReindex(force bool) error {
 	registry := factory.GetRegistry()
 
 	// ---- Phase 1: enumerate the active Codex provider, then dedup ----
-	ids, provs, perProvider := enumerateAll(registry, true)
+	ids, provs, perProvider, complete := enumerateAll(registry, true)
 
 	// Existing fingerprints, so unchanged sessions can be skipped (the incremental path).
 	fingerprints := map[string]sessionindex.Fingerprint{}
@@ -119,13 +120,32 @@ func runReindex(force bool) error {
 	found := len(order)
 	cache := &projectIDCache{m: map[string]projectIDName{}}
 	work, totals, unchanged := selectWork(order, best, fingerprints, "", force, cache)
+	reconcile := func() error {
+		if ctx.Err() != nil {
+			return nil
+		}
+		removed, err := reconcileCompleteProviders(store, ids, perProvider, complete)
+		if err != nil {
+			return fmt.Errorf("reconciling deleted native sessions: %w", err)
+		}
+		if removed > 0 {
+			fprintf(os.Stderr, "✓   Removed %d stale indexed sessions.\n", removed)
+		}
+		return nil
+	}
 
 	if found == 0 {
+		if err := reconcile(); err != nil {
+			return err
+		}
 		fprintln(os.Stderr, "No agent sessions found to index.")
 		return nil
 	}
 	fprintf(os.Stderr, "✓   Found %d sessions  ·  %s\n", found, summarizeCounts(ids, foundPerAgent))
 	if len(work) == 0 {
+		if err := reconcile(); err != nil {
+			return err
+		}
 		fprintf(os.Stderr, "✓   All %d sessions already up to date.  (%.1fs)\n", found, time.Since(start).Seconds())
 		return nil
 	}
@@ -144,6 +164,9 @@ func runReindex(force bool) error {
 
 	if writeErr != nil {
 		return fmt.Errorf("writing restore index: %w", writeErr)
+	}
+	if err := reconcile(); err != nil {
+		return err
 	}
 
 	// ---- Summary (counts reflect the WHOLE index, not just this run's work) ----
@@ -164,13 +187,16 @@ func runReindex(force bool) error {
 // ---- reindex engine (shared by the foreground command and the background warm) ----
 
 // enumerateAll concurrently lists every installed provider's sessions. The returned slices
-// are index-aligned: provs[i]/perProvider[i] correspond to ids[i] (a nil provs[i] marks a
-// provider that failed to load). When visible, it renders a live "Scanning agents…" line
-// (foreground reindex); the background warm passes visible=false and stays silent.
-func enumerateAll(registry *factory.Registry, visible bool) (ids []string, provs []spi.Provider, perProvider [][]spi.GlobalSessionRef) {
+// are index-aligned: provs[i]/perProvider[i]/complete[i] correspond to ids[i] (a nil provs[i]
+// and complete[i]=false mark a provider that failed to load). complete distinguishes a real
+// empty inventory from an error or panic, which deletion reconciliation must never conflate.
+// When visible, it renders a live "Scanning agents…" line (foreground reindex); the background
+// warm passes visible=false and stays silent.
+func enumerateAll(registry *factory.Registry, visible bool) (ids []string, provs []spi.Provider, perProvider [][]spi.GlobalSessionRef, complete []bool) {
 	ids = registry.ListIDs()
 	perProvider = make([][]spi.GlobalSessionRef, len(ids))
 	provs = make([]spi.Provider, len(ids))
+	complete = make([]bool, len(ids))
 
 	var scan *scanProgress
 	if visible {
@@ -190,13 +216,14 @@ func enumerateAll(registry *factory.Registry, visible bool) (ids []string, provs
 		ewg.Add(1)
 		go func(i int, id string, prov spi.Provider, reporter *spi.ScanReporter) {
 			defer ewg.Done()
-			refs := enumerateOne(id, prov, reporter)
+			refs, scanComplete := enumerateOne(id, prov, reporter)
 			perProvider[i] = refs
+			complete[i] = scanComplete
 			scan.markDone(id, len(refs))
 		}(i, id, prov, reporter)
 	}
 	ewg.Wait()
-	return ids, provs, perProvider
+	return ids, provs, perProvider, complete
 }
 
 // cursorProviderID is the registry key for the Cursor provider (see factory.NewRegistry).
@@ -258,11 +285,12 @@ func recoverCursorCwds(ids []string, perProvider [][]spi.GlobalSessionRef, store
 // (Codex, the long pole, ticks the live line; the rest snap to their final count via markDone).
 // A panic in a provider's enumeration (e.g. a malformed session tree) is recovered and logged so
 // one bad provider degrades to "no sessions" rather than crashing the entire reindex/warm sweep.
-func enumerateOne(id string, prov spi.Provider, reporter *spi.ScanReporter) (refs []spi.GlobalSessionRef) {
+func enumerateOne(id string, prov spi.Provider, reporter *spi.ScanReporter) (refs []spi.GlobalSessionRef, complete bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("reindex: provider enumeration panicked", "provider", id, "panic", r)
 			refs = nil
+			complete = false
 		}
 	}()
 	var err error
@@ -273,8 +301,9 @@ func enumerateOne(id string, prov spi.Provider, reporter *spi.ScanReporter) (ref
 	}
 	if err != nil {
 		slog.Warn("reindex: enumeration failed", "provider", id, "error", err)
+		return refs, false
 	}
-	return refs
+	return refs, true
 }
 
 // dedupRefs collapses enumerated refs by (agent, session_id), keeping the freshest file. A
@@ -313,6 +342,30 @@ func dedupRefs(ids []string, provs []spi.Provider, perProvider [][]spi.GlobalSes
 		foundPerAgent[best[key].agent]++
 	}
 	return best, order, foundPerAgent
+}
+
+// reconcileCompleteProviders removes stale live rows only for provider inventories explicitly
+// marked complete. Partial results remain useful for indexing but are never deletion evidence.
+func reconcileCompleteProviders(store *sessionindex.Store, ids []string, perProvider [][]spi.GlobalSessionRef, complete []bool) (int, error) {
+	if len(perProvider) != len(ids) || len(complete) != len(ids) {
+		return 0, errors.New("provider enumeration results are not aligned")
+	}
+	total := 0
+	for i, id := range ids {
+		if !complete[i] {
+			continue
+		}
+		sessionIDs := make([]string, 0, len(perProvider[i]))
+		for _, ref := range perProvider[i] {
+			sessionIDs = append(sessionIDs, ref.SessionID)
+		}
+		removed, err := store.ReconcileProviderSessions(id, sessionIDs)
+		if err != nil {
+			return total, fmt.Errorf("reconcile %s sessions: %w", id, err)
+		}
+		total += removed
+	}
+	return total, nil
 }
 
 // selectWork applies the incremental fingerprint skip (and an optional project filter) to the
@@ -446,7 +499,7 @@ func warmIndexInBackground(ctx context.Context, dbPath, currentProjectID string,
 	defer func() { _ = store.Close() }()
 
 	registry := factory.GetRegistry()
-	ids, provs, perProvider := enumerateAll(registry, false)
+	ids, provs, perProvider, _ := enumerateAll(registry, false)
 	recoverCursorCwds(ids, perProvider, store) // resolve Cursor cwds (index + other providers)
 	if ctx.Err() != nil {
 		return

@@ -150,6 +150,118 @@ func TestSummarizeCounts(t *testing.T) {
 	}
 }
 
+func TestEnumerateOneReportsOnlySuccessfulScansComplete(t *testing.T) {
+	refs := []spi.GlobalSessionRef{{SessionID: "s1"}}
+	tests := []struct {
+		name         string
+		provider     spi.Provider
+		wantRefs     int
+		wantComplete bool
+	}{
+		{name: "successful inventory", provider: &fakeProvider{enumRefs: refs}, wantRefs: 1, wantComplete: true},
+		{name: "provider error keeps partial results", provider: &fakeProvider{enumRefs: refs, enumErr: fmt.Errorf("scan failed")}, wantRefs: 1},
+		{name: "provider panic", provider: &fakeProvider{enumPanic: true}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, complete := enumerateOne("codex", tt.provider, nil)
+			if len(got) != tt.wantRefs {
+				t.Errorf("refs = %d, want %d", len(got), tt.wantRefs)
+			}
+			if complete != tt.wantComplete {
+				t.Errorf("complete = %v, want %v", complete, tt.wantComplete)
+			}
+		})
+	}
+}
+
+func TestReconcileCompleteProvidersSkipsIncompleteInventory(t *testing.T) {
+	store, err := sessionindex.Open(filepath.Join(t.TempDir(), "sessions.db"))
+	if err != nil {
+		t.Fatalf("open index: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	if err := store.Upsert(sessionindex.Session{
+		ProjectID: "proj", Agent: "codex", SessionID: "stale",
+		CreatedAt: "2026-08-16T00:00:00Z", UpdatedAt: "2026-08-16T00:00:00Z",
+		Body: "stale body",
+	}); err != nil {
+		t.Fatalf("seed index: %v", err)
+	}
+
+	ids := []string{"codex"}
+	refs := [][]spi.GlobalSessionRef{{}}
+	removed, err := reconcileCompleteProviders(store, ids, refs, []bool{false})
+	if err != nil || removed != 0 {
+		t.Fatalf("incomplete reconciliation = %d, %v; want 0, nil", removed, err)
+	}
+	if exists, err := store.Exists("codex", "stale"); err != nil || !exists {
+		t.Fatalf("incomplete scan removed session: exists=%v err=%v", exists, err)
+	}
+
+	removed, err = reconcileCompleteProviders(store, ids, refs, []bool{true})
+	if err != nil || removed != 1 {
+		t.Fatalf("complete empty reconciliation = %d, %v; want 1, nil", removed, err)
+	}
+}
+
+func TestRunReindexRemovesSessionDeletedFromNativeCodexStore(t *testing.T) {
+	home := t.TempDir()
+	dataHome := filepath.Join(home, "data")
+	project := filepath.Join(home, "project")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", dataHome)
+	if err := os.MkdirAll(project, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sessionsDir := filepath.Join(home, ".codex", "sessions", "2026", "08", "16")
+	if err := os.MkdirAll(sessionsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	nativePath := filepath.Join(sessionsDir, "rollout-synthetic.jsonl")
+	content := fmt.Sprintf(`{"type":"session_meta","timestamp":"2026-08-16T00:00:00Z","payload":{"id":"native-delete","timestamp":"2026-08-16T00:00:00Z","cwd":%q,"source":"cli","thread_source":"user","originator":"codex-tui"}}
+{"type":"event_msg","timestamp":"2026-08-16T00:00:01Z","payload":{"type":"user_message","message":"Synthetic prompt"}}
+`, project)
+	if err := os.WriteFile(nativePath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runReindex(false); err != nil {
+		t.Fatalf("initial reindex: %v", err)
+	}
+	dbPath, err := sessionindex.DefaultPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := sessionindex.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists, err := store.Exists("codex", "native-delete"); err != nil || !exists {
+		_ = store.Close()
+		t.Fatalf("indexed native session exists=%v err=%v; want true", exists, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Remove(nativePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := runReindex(false); err != nil {
+		t.Fatalf("reindex after native delete: %v", err)
+	}
+	store, err = sessionindex.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	if exists, err := store.Exists("codex", "native-delete"); err != nil || exists {
+		t.Fatalf("deleted native session exists=%v err=%v; want false", exists, err)
+	}
+}
+
 // TestDedupRefs verifies the collapse done before indexing: a session enumerated more than
 // once (same agent+id) keeps the freshest native file by mtime, sessions with a blank id are
 // dropped, a failed provider (nil) is skipped entirely, and foundPerAgent counts distinct

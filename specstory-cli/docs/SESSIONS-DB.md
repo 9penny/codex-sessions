@@ -40,6 +40,13 @@ TUI deletion is a database tombstone. It removes searchable text and keeps the r
 incremental or forced reindex, while leaving native JSONL untouched. Deleting the derived database
 clears tombstones and restores all discoverable native sessions on the next reindex.
 
+Codex `/delete` has the opposite direction: it permanently removes the native saved session. A
+complete successful `csessions reindex` treats that native inventory as authoritative and removes
+live index rows that no longer exist, together with their FTS and AI metadata in one transaction.
+Soft-delete tombstones are preserved. Provider load failures, enumeration errors or panics, and
+interrupted runs cannot trigger this reconciliation, so a failed scan is never mistaken for an
+empty native inventory.
+
 ## Preview boundary
 
 Preview never reads the FTS body as a transcript substitute. It opens the selected native JSONL on

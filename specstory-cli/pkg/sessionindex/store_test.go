@@ -672,6 +672,54 @@ func TestSoftDeleteSurvivesReupsert(t *testing.T) {
 	}
 }
 
+func TestReconcileProviderSessionsRemovesOnlyMissingLiveDerivedData(t *testing.T) {
+	s := openTemp(t)
+	keep := newSession("codex", "keep", "proj-a", "Keep", "keep body")
+	stale := newSession("codex", "stale", "proj-a", "Stale", "stale body")
+	tombstone := newSession("codex", "tombstone", "proj-a", "Hidden", "hidden body")
+	other := newSession("claude", "other", "proj-a", "Other", "other body")
+	if err := s.UpsertBatch([]Session{keep, stale, tombstone, other}); err != nil {
+		t.Fatalf("UpsertBatch: %v", err)
+	}
+	for _, session := range []Session{stale, tombstone} {
+		if err := s.UpsertAIMetadata(AIMetadata{
+			Agent: session.Agent, SessionID: session.SessionID,
+			SourceSize: session.Size, SourceMtime: session.Mtime,
+			SourceIndexVersion: session.IndexVersion, PromptVersion: CurrentAIPromptVersion,
+			Model: "test-model", Title: "Generated " + session.Name,
+			Summary: "Generated summary", Tags: []string{"generated"},
+			EnrichedAt: "2026-08-16T00:00:00Z",
+		}); err != nil {
+			t.Fatalf("UpsertAIMetadata(%s): %v", session.SessionID, err)
+		}
+	}
+	mustSoftDeleteSession(t, s, "codex", tombstone.SessionID)
+
+	removed, err := s.ReconcileProviderSessions("codex", []string{keep.SessionID})
+	if err != nil || removed != 1 {
+		t.Fatalf("ReconcileProviderSessions = %d, %v; want 1, nil", removed, err)
+	}
+	if exists, err := s.Exists("codex", stale.SessionID); err != nil || exists {
+		t.Errorf("stale session exists=%v err=%v; want removed", exists, err)
+	}
+	if _, ok, err := s.GetAIMetadata("codex", stale.SessionID); err != nil || ok {
+		t.Errorf("stale AI metadata ok=%v err=%v; want removed", ok, err)
+	}
+	var staleFTS int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions_fts WHERE agent = ? AND session_id = ?`,
+		"codex", stale.SessionID).Scan(&staleFTS); err != nil || staleFTS != 0 {
+		t.Errorf("stale FTS rows=%d err=%v; want 0", staleFTS, err)
+	}
+	for _, key := range [][2]string{{"codex", keep.SessionID}, {"codex", tombstone.SessionID}, {"claude", other.SessionID}} {
+		if exists, err := s.Exists(key[0], key[1]); err != nil || !exists {
+			t.Errorf("preserved %s/%s exists=%v err=%v; want true", key[0], key[1], exists, err)
+		}
+	}
+	if _, ok, err := s.GetAIMetadata("codex", tombstone.SessionID); err != nil || !ok {
+		t.Errorf("tombstone AI metadata ok=%v err=%v; want preserved", ok, err)
+	}
+}
+
 // TestSoftDeleteProject tombstones every session in a project while leaving other projects intact,
 // and confirms a NEW session in the deleted project still indexes (the project isn't blacklisted).
 func TestSoftDeleteProject(t *testing.T) {
