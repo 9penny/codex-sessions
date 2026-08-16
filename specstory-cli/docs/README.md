@@ -2,6 +2,7 @@
 
 Current Codex Sessions documents:
 
+- [v0.3 implementation plan](V0.3-IMPLEMENTATION-PLAN.md)
 - [v0.2 implementation plan](V0.2-IMPLEMENTATION-PLAN.md)
 - [v0.2 synthetic model evaluation](V0.2-MODEL-EVALUATION.md)
 - [v0.2 AI enrichment privacy and usage](V0.2-ENRICHMENT.md)

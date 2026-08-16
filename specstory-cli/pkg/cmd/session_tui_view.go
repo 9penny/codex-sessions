@@ -300,7 +300,7 @@ func (m sessionTUI) renderFooter() string {
 	}
 	if m.localOnly {
 		return styDim.Render(strings.Join([]string{
-			"↑↓ move", "↵ resume", "n new", "space preview", "/ search", m.hiddenKeyHint(), "q quit",
+			"↑↓ move", "↵ resume", "n new", "space preview", "/ search", m.hiddenKeyHint(), "d delete", "q quit",
 		}, " · "))
 	}
 	scopeKey := "tab all-projects"

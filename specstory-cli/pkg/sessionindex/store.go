@@ -950,6 +950,84 @@ func (s *Store) SoftDeleteProject(projectID string) (int, error) {
 	return s.softDelete(`project_id = ?`, projectID)
 }
 
+// ReconcileProviderSessions removes live derived rows that are absent from one provider's
+// complete native inventory. The caller must invoke this only after proving enumeration
+// completed successfully; an empty inventory is therefore meaningful and removes every live
+// row for agent. Soft-delete tombstones and every other provider are preserved. Session, FTS,
+// and AI metadata removals commit atomically.
+func (s *Store) ReconcileProviderSessions(agent string, nativeSessionIDs []string) (int, error) {
+	agent = strings.TrimSpace(agent)
+	if agent == "" {
+		return 0, errors.New("provider id is required for reconciliation")
+	}
+	present := make(map[string]struct{}, len(nativeSessionIDs))
+	for _, sessionID := range nativeSessionIDs {
+		if sessionID = strings.TrimSpace(sessionID); sessionID != "" {
+			present[sessionID] = struct{}{}
+		}
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin provider reconciliation: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	type target struct {
+		sessionID string
+		ftsRowid  sql.NullInt64
+	}
+	rows, err := tx.Query(`SELECT session_id, fts_rowid FROM sessions WHERE agent = ? AND deleted = 0`, agent)
+	if err != nil {
+		return 0, fmt.Errorf("select provider sessions for reconciliation: %w", err)
+	}
+	var targets []target
+	for rows.Next() {
+		var candidate target
+		if err := rows.Scan(&candidate.sessionID, &candidate.ftsRowid); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("scan provider session for reconciliation: %w", err)
+		}
+		if _, found := present[candidate.sessionID]; !found {
+			targets = append(targets, candidate)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, fmt.Errorf("iterate provider sessions for reconciliation: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("close provider reconciliation rows: %w", err)
+	}
+
+	for _, candidate := range targets {
+		if candidate.ftsRowid.Valid {
+			if _, err := tx.Exec(`DELETE FROM sessions_fts WHERE rowid = ?`, candidate.ftsRowid.Int64); err != nil {
+				return 0, fmt.Errorf("delete reconciled FTS row: %w", err)
+			}
+		} else if _, err := tx.Exec(`DELETE FROM sessions_fts WHERE agent = ? AND session_id = ?`, agent, candidate.sessionID); err != nil {
+			return 0, fmt.Errorf("delete reconciled legacy FTS row: %w", err)
+		}
+		if _, err := tx.Exec(`DELETE FROM ai_metadata WHERE agent = ? AND session_id = ?`, agent, candidate.sessionID); err != nil {
+			return 0, fmt.Errorf("delete reconciled AI metadata: %w", err)
+		}
+		if _, err := tx.Exec(`DELETE FROM sessions WHERE agent = ? AND session_id = ? AND deleted = 0`, agent, candidate.sessionID); err != nil {
+			return 0, fmt.Errorf("delete reconciled session: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit provider reconciliation: %w", err)
+	}
+	committed = true
+	return len(targets), nil
+}
+
 // softDelete flags the rows matched by where (deleted = 1) and clears their FTS rows in one
 // transaction, keeping each sessions row (and its fingerprint) so reindex treats it as
 // unchanged. FTS rows are removed by (agent, session_id) — the same by-key delete upsert uses,

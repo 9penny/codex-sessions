@@ -596,7 +596,7 @@ func (m sessionTUI) renderProjects() string {
 	}
 	if m.localOnly {
 		b.WriteString(styDim.Render(strings.Join([]string{
-			"↑↓ move", "↵ open", "n new", "/ search", m.hiddenKeyHint(), "q quit",
+			"↑↓ move", "↵ open", "n new", "/ search", "p filter projects", m.hiddenKeyHint(), "d delete", "q quit",
 		}, " · ")))
 		return b.String()
 	}

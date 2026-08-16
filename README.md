@@ -71,6 +71,7 @@ Core TUI keys:
 - `n`: start a new Codex session in the selected project directory
 - `space`: open masked preview; `R` temporarily reveals it
 - `/`: search; `h`: show or hide background sessions
+- `d`: hide the selected session from the disposable csessions index after confirmation
 - `q` or `esc`: quit or go back
 
 If a recorded directory is missing, launch is blocked with an explanation instead of silently
@@ -88,6 +89,11 @@ Codex Sessions respects the XDG base-directory variables:
 
 Deleting the derived database is safe; `csessions reindex` rebuilds it from native JSONL.
 
+Deletion has two different meanings. Codex `/delete` permanently removes the native saved session;
+the next successful `csessions reindex` removes its stale derived row. The `d` key inside csessions
+only soft-deletes from the local index and never touches native JSONL. Deleting `sessions.db` and
+reindexing restores sessions hidden with `d` when their native files still exist.
+
 Optional AI enrichment is never automatic. It requires the explicit `csessions enrich --yes`
 command, sends only fail-closed redacted user/assistant text, and stores generated titles,
 summaries, and tags only in the disposable database. Read the
@@ -95,10 +101,11 @@ summaries, and tags only in the disposable database. Read the
 
 ## Development
 
-The ordered work and release gates are in the
-[v0.2 implementation plan](specstory-cli/docs/V0.2-IMPLEMENTATION-PLAN.md). The completed v0.1
-scope remains in the [v0.1 plan](specstory-cli/docs/V0.1-IMPLEMENTATION-PLAN.md). Run the standard
-gate from `specstory-cli/`:
+The current ordered work and release gates are in the
+[v0.3 implementation plan](specstory-cli/docs/V0.3-IMPLEMENTATION-PLAN.md). Completed scopes remain
+in the [v0.2 plan](specstory-cli/docs/V0.2-IMPLEMENTATION-PLAN.md) and
+[v0.1 plan](specstory-cli/docs/V0.1-IMPLEMENTATION-PLAN.md). Run the standard gate from
+`specstory-cli/`:
 
 ```bash
 gofmt -w .
