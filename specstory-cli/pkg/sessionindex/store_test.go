@@ -3,6 +3,7 @@ package sessionindex
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -55,6 +56,83 @@ func openTemp(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	return s
+}
+
+func TestOpenKeepsIndexFilesPrivate(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "csessions")
+	path := filepath.Join(dir, "sessions.db")
+
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Set the legacy modes explicitly: the TDD test runner itself uses umask 077.
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	for name, want := range map[string]os.FileMode{
+		dir:           0o700,
+		path:          0o600,
+		path + "-wal": 0o600,
+		path + "-shm": 0o600,
+	} {
+		info, err := os.Stat(name)
+		if err != nil {
+			t.Errorf("Stat(%q): %v", name, err)
+			continue
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Errorf("mode of %q = %#o, want %#o", name, got, want)
+		}
+	}
+}
+
+func TestOpenDoesNotChmodExistingCustomParent(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "shared")
+	path := filepath.Join(dir, "custom.db")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o755 {
+		t.Errorf("custom parent mode = %#o, want 0755", got)
+	}
+	for _, name := range []string{path, path + "-wal", path + "-shm"} {
+		info, err := os.Stat(name)
+		if err != nil {
+			t.Errorf("Stat(%q): %v", name, err)
+			continue
+		}
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Errorf("mode of %q = %#o, want 0600", name, got)
+		}
+	}
 }
 
 func TestUpsertAndListByProject(t *testing.T) {
