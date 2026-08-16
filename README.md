@@ -7,6 +7,8 @@ search, preview, resume, or start sessions without an account or cloud service.
 > This is a personal-first open-source fork under active development. The `dev` branch is the
 > integration branch; `v0.3.1` is the current supported Linux/WSL release.
 
+New user? Follow the [简体中文十分钟上手教程](specstory-cli/docs/GETTING-STARTED.zh-CN.md).
+
 ## Safety model
 
 - Native Codex JSONL files are authoritative and are never modified.

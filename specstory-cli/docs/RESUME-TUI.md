@@ -24,7 +24,9 @@ or empty derived index is rebuilt from native Codex JSONL first.
   tombstone prevents ordinary or forced reindex from restoring the row.
 - `q` quits; `esc` closes the current mode or goes back.
 
-The local-mode footer is intentionally compact enough for an 80-column SSH terminal.
+The TUI targets an 80-column SSH terminal. In v0.3.1 the complete local-mode key hint may wrap on
+an exactly 80-column terminal; the actions remain available, but responsive footer help is a known
+follow-up.
 
 ## Data boundary
 
