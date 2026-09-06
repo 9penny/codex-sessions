@@ -103,6 +103,11 @@ summaries, and tags only in the disposable database. Read the
 
 ## Development
 
+Project planning and historical research are maintained in
+[project records](specstory-cli/docs/project/README.md), consolidated from the former
+`codex-session-management` repository. See the [roadmap](specstory-cli/docs/project/ROADMAP.md)
+for cross-version priorities and the [documentation map](specstory-cli/docs/README.md) for all guides.
+
 The current ordered work and release gates are in the
 [v0.3 implementation plan](specstory-cli/docs/V0.3-IMPLEMENTATION-PLAN.md). Completed scopes remain
 in the [v0.2 plan](specstory-cli/docs/V0.2-IMPLEMENTATION-PLAN.md) and
