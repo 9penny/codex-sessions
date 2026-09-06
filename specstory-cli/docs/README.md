@@ -8,6 +8,13 @@
 - [AI enrichment privacy and usage](V0.2-ENRICHMENT.md)
 - [derived sessions index and recovery](SESSIONS-DB.md)
 
+## Project planning
+
+- [Project records and migration provenance](project/README.md)
+- [Status and candidate roadmap](project/ROADMAP.md)
+- [v0.3.1 design review](project/V0.3.1-DESIGN-REVIEW.md)
+- [Historical requirements and tool evaluation](project/RESEARCH.md)
+
 ## Project and release records
 
 - [v0.3 implementation plan](V0.3-IMPLEMENTATION-PLAN.md)
