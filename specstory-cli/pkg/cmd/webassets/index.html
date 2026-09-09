@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark"><title>Codex Sessions · 项目会话</title>
+<link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+ <a class="brand" href="/" aria-label="Codex Sessions 首页"><span class="brand-icon">⌘</span><span>Codex <strong>Sessions</strong></span></a>
+ <span id="machine" class="machine">本机会话库</span>
+ <div class="top-actions"><span class="local-dot"></span><span>本地存储</span><button id="settings" class="quiet">扫描位置</button><button id="refresh" class="quiet">↻ 刷新</button><button id="theme" class="quiet" aria-label="切换深浅主题">◐</button></div>
+</header>
+<div id="connection" class="connection" hidden></div>
+<main class="workspace">
+ <aside class="sidebar" aria-label="项目导航">
+  <div class="section-label">会话库</div>
+  <nav class="library-nav"><button data-view="all" class="nav-row"><span>▦ 全部项目</span><span id="total-count" class="count">0</span></button><button data-view="favorites" class="nav-row"><span>☆ 我的收藏</span><span id="favorite-count" class="count">0</span></button><button data-view="hidden" class="nav-row"><span>◌ 已隐藏</span><span id="hidden-count" class="count">0</span></button></nav>
+  <div class="section-heading"><span class="section-label">项目目录</span><select id="project-sort" aria-label="项目排序"><option value="recent">最近活跃</option><option value="name">名称</option></select></div>
+  <input id="project-filter" class="input project-filter" placeholder="筛选项目目录…" aria-label="筛选项目目录">
+  <div id="project-tree" class="project-tree"><p class="muted empty-small">正在发现项目…</p></div>
+  <div class="scan-footer"><div id="scan-label">准备扫描</div><div id="scan-detail" class="muted">首次扫描范围：~/</div><div id="scan-time" class="muted"></div></div>
+ </aside>
+ <section class="session-panel" aria-label="会话列表">
+  <div class="list-heading"><div><div class="eyebrow">PROJECT SESSIONS</div><h1 id="scope-title">全部项目</h1></div><span id="list-count" class="pill">0</span></div>
+  <div id="scope-path" class="scope-path">当前机器的所有项目</div>
+  <div class="search-box"><span>⌕</span><input id="search" placeholder="搜索标题、摘要或对话…" aria-label="搜索会话"><kbd>⌘ / Ctrl K</kbd></div>
+  <div class="list-options"><span>最近更新优先 · 包含子目录</span><label><input id="background" type="checkbox"> 后台会话</label></div>
+  <div id="session-list" class="session-list" aria-live="polite"></div>
+  <div id="pagination" class="pagination" hidden><button id="previous" class="quiet">← 上一页</button><span id="page-info"></span><button id="next" class="quiet">下一页 →</button></div>
+ </section>
+ <section class="reader-panel" aria-label="对话阅读">
+  <div id="reader-empty" class="reader-empty"><div class="empty-icon">⌘</div><h2>从上次停下的地方继续</h2><p>选择左侧项目，再打开一段会话。<br>在这里回顾，在终端继续。</p><div class="hint-chips"><span>目录包含子项目</span><span>支持中英文搜索</span></div></div>
+  <div id="reader-content" class="reader-content" hidden>
+   <div class="reader-header"><div class="reader-meta"><span id="reader-date"></span><span id="reader-kind" class="pill"></span></div><h2 id="reader-title"></h2><div id="reader-path" class="scope-path"></div><div class="reader-actions"><button id="resume" class="primary">复制终端恢复命令 ↗</button><button id="favorite" class="quiet">☆ 收藏</button><button id="rename" class="quiet">改标题</button><button id="hide" class="quiet">隐藏</button></div><div id="resume-note" class="muted"></div></div>
+   <div class="reader-tools"><input id="find" placeholder="在此会话中查找…" aria-label="会话内查找"><span id="find-count" class="muted"></span><button id="find-next" class="quiet" aria-label="下一个匹配">↓</button><span class="masked-label">敏感信息已脱敏</span></div>
+   <div id="reader-scroll" class="reader-scroll"><div id="ai-summary" class="ai-summary" hidden></div><details class="ai-tools"><summary>✦ AI 标题与摘要</summary><p>保留现有 AI 生成功能。复制命令到这台机器的终端执行，完成后页面会自动更新。手动标题优先显示。</p><button id="enrich-preview" class="quiet">复制用量预览命令</button><button id="enrich" class="quiet">复制生成命令</button><p class="muted">生成命令会发送脱敏后的用户与助手对话，最多处理当前项目 10 个会话；沿用已有 AI 配置。</p></details><article id="transcript" class="markdown"></article></div>
+  </div>
+ </section>
+</main>
+<div id="toast" class="toast" role="status" hidden></div>
+<dialog id="rename-dialog"><form id="rename-form"><h2>修改显示标题</h2><p class="muted">只保存在会话库中，不修改原始会话。留空可恢复 AI 或原始标题。</p><input id="title-input" class="input" maxlength="200" aria-label="显示标题"><div class="dialog-actions"><button type="button" data-close="rename-dialog" class="quiet">取消</button><button class="primary">保存标题</button></div></form></dialog>
+<dialog id="settings-dialog"><h2>扫描位置</h2><p class="muted">优先扫描标准 Codex 存储，再遍历这些目录寻找原生会话。跳过符号链接、依赖及缓存目录。</p><ul id="roots"></ul><form id="root-form"><label for="root-input">添加其他位置</label><input id="root-input" class="input" placeholder="例如 ~/work 或 /mnt/d/projects" required><div class="dialog-actions"><button type="button" data-close="settings-dialog" class="quiet">关闭</button><button class="primary">添加并扫描</button></div></form></dialog>
+<dialog id="copy-dialog"><h2>终端命令</h2><p class="muted">浏览器未允许自动复制。请选中并复制下方命令，粘贴到当前机器的 WSL / SSH 终端。</p><textarea id="copy-text" rows="5" readonly aria-label="待复制命令"></textarea><div class="dialog-actions"><button data-close="copy-dialog" class="primary">完成</button></div></dialog>
+</body></html>

@@ -1,6 +1,7 @@
 # Codex Sessions
 
-Codex Sessions is a local-only terminal browser for Codex CLI history. It indexes the native
+Codex Sessions is a local session browser for Codex CLI history, with a terminal picker and a
+project-first web interface. It indexes the native
 `~/.codex/sessions` JSONL files into a disposable, redacted SQLite database so you can browse,
 search, preview, resume, or start sessions without an account or cloud service.
 
@@ -16,7 +17,8 @@ New user? Follow the [简体中文十分钟上手教程](specstory-cli/docs/GETT
   tool output are excluded.
 - Preview reads native JSONL on demand, masks secrets by default, and never caches raw text.
 - Uppercase `R` reveals only the current preview in process memory; navigating away clears it.
-- There is no login, sync, analytics, telemetry, or version check. Optional live AI enrichment is
+- There is no login, sync, analytics, telemetry, or version check. The web service binds only to
+  loopback and requires a per-process token for data access. Optional live AI enrichment is
   the only supported outbound path and requires an explicit `csessions enrich --yes` invocation.
 - Background `subagent`, `exec`, and unknown-source sessions are hidden by default.
 
@@ -67,6 +69,24 @@ csessions enrich --dry-run --limit 10
 csessions enrich --all --dry-run --limit 10
 ```
 
+The development branch also includes a project-first web browser:
+
+```bash
+# Start from any directory; open the complete localhost link printed in the terminal
+csessions web
+
+# Choose another local port (also works with SSH / Tailscale port forwarding)
+csessions web --port 5432
+```
+
+The web interface discovers native sessions under your home directory, groups them in a directory
+tree with parent/subdirectory aggregation, and provides search, Markdown reading, code copying,
+manual titles, favorites, and reversible hiding. Continue conversations by copying a restore
+command into the session machine's terminal. Existing AI titles, summaries, tags, and explicit
+`enrich` commands remain available. See the [网页使用指南](specstory-cli/docs/WEB-BROWSER.zh-CN.md)
+for WSL, SSH forwarding, scanning, and storage details. Build from this branch to use `web`;
+the published v0.3.1 binary does not include it.
+
 Core TUI keys:
 
 - `enter` or `r`: resume the selected session in its recorded directory
@@ -87,9 +107,12 @@ Codex Sessions respects the XDG base-directory variables:
 |---|---|
 | Configuration | `~/.config/csessions/` |
 | Derived index (directory 0700, SQLite files 0600) | `~/.local/share/csessions/sessions.db` |
+| Personal titles, favorites, hidden state, scan roots (keep this file) | `~/.local/share/csessions/library.json` |
 | Disposable cache | `~/.cache/csessions/` |
 
-Deleting the derived database is safe; `csessions reindex` rebuilds it from native JSONL.
+Deleting the derived database is safe; `csessions reindex` rebuilds it from the standard native
+store, and `csessions web` rediscovers additional configured locations. Keep `library.json`:
+it contains personal edits that cannot be rebuilt from native JSONL.
 
 Deletion has two different meanings. Codex `/delete` permanently removes the native saved session;
 the next successful `csessions reindex` removes its stale derived row. The `d` key inside csessions
