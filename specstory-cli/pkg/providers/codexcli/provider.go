@@ -1187,22 +1187,23 @@ func (p *Provider) ListAllAgentChatSessionsProgress(r *spi.ScanReporter) ([]spi.
 		return []spi.GlobalSessionRef{}, nil
 	}
 
-	return spi.ScanSessionsInParallel(sessionsRoot, "codex", r, func(path string) (*spi.GlobalSessionRef, error) {
-		h, err := scanCodexSessionHeader(path)
-		if err != nil {
-			return nil, err
-		}
-		if h == nil {
-			return nil, nil // empty session (no user message)
-		}
-		return &spi.GlobalSessionRef{
-			SessionID:  h.sessionID,
-			CreatedAt:  h.createdAt,
-			Slug:       spi.GenerateFilenameFromUserMessage(h.firstUserMessage),
-			Name:       spi.GenerateReadableName(h.firstUserMessage),
-			NativePath: path,
-			OriginCwd:  h.cwd,
-			Kind:       h.kind,
-		}, nil
-	})
+	return spi.ScanSessionsInParallel(sessionsRoot, "codex", r, p.InspectSessionFile)
+}
+
+// InspectSessionFile recognizes a native Codex JSONL without changing it. The home-directory
+// browser shares the same metadata and source classification as standard Codex discovery.
+func (p *Provider) InspectSessionFile(path string) (*spi.GlobalSessionRef, error) {
+	h, err := scanCodexSessionHeader(path)
+	if err != nil {
+		return nil, err
+	}
+	if h == nil {
+		return nil, nil
+	}
+	return &spi.GlobalSessionRef{
+		SessionID: h.sessionID, CreatedAt: h.createdAt,
+		Slug:       spi.GenerateFilenameFromUserMessage(h.firstUserMessage),
+		Name:       spi.GenerateReadableName(h.firstUserMessage),
+		NativePath: path, OriginCwd: h.cwd, Kind: h.kind,
+	}, nil
 }

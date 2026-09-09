@@ -27,7 +27,7 @@ func TestLocalCommandTreeExcludesOutboundSurfaces(t *testing.T) {
 		commands = append(commands, command.Name())
 	}
 	slices.Sort(commands)
-	wantCommands := []string{"enrich", "help", "reindex", "resume", "search", "version"}
+	wantCommands := []string{"enrich", "help", "reindex", "resume", "search", "version", "web"}
 	if !slices.Equal(commands, wantCommands) {
 		t.Fatalf("local commands = %v, want %v", commands, wantCommands)
 	}

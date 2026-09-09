@@ -103,9 +103,11 @@ type Session struct {
 // mtime, plus the reindex logic version that produced the row. reindex skips a session
 // whose fingerprint is unchanged. See docs/SESSIONS-DB.md.
 type Fingerprint struct {
-	Size    int64
-	Mtime   int64
-	Version int
+	// NativePath detects relocation even when file contents and timestamps are unchanged.
+	NativePath string
+	Size       int64
+	Mtime      int64
+	Version    int
 	// Deleted marks a soft-deleted (tombstoned) session. reindex skips it regardless of
 	// whether the native file changed, so a user's delete stays deleted until sessions.db
 	// is wiped and rebuilt. See the deleted-column migration in ensureSchema.
@@ -512,7 +514,7 @@ func (s *Store) runMigration(stmt string) {
 // whose native file is unchanged (same size + mtime) and was indexed by the current
 // logic version.
 func (s *Store) Fingerprints() (map[string]Fingerprint, error) {
-	rows, err := s.db.Query(`SELECT agent, session_id, size, mtime, index_version, deleted FROM sessions`)
+	rows, err := s.db.Query(`SELECT agent, session_id, size, mtime, index_version, deleted, native_path FROM sessions`)
 	if err != nil {
 		return nil, err
 	}
@@ -523,7 +525,7 @@ func (s *Store) Fingerprints() (map[string]Fingerprint, error) {
 		var agent, sessionID string
 		var deleted int
 		var fp Fingerprint
-		if err := rows.Scan(&agent, &sessionID, &fp.Size, &fp.Mtime, &fp.Version, &deleted); err != nil {
+		if err := rows.Scan(&agent, &sessionID, &fp.Size, &fp.Mtime, &fp.Version, &deleted, &fp.NativePath); err != nil {
 			return nil, err
 		}
 		fp.Deleted = deleted != 0
